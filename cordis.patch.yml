@@ -1,0 +1,8 @@
+# dsh-gpu-monitor bundle patch: 插入宿主插件行。
+- insert:
+    - id: dsh-gpu-monitor
+      name: dsh-gpu-monitor
+      config:
+        intervalMs: 3000
+        queryTimeoutMs: 8000
+        sshTarget: ""

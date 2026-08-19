@@ -1,0 +1,48 @@
+{
+  "name": "dsh-gpu-monitor",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness 插件：nvidia-smi GPU 用量实时监控，方块图停靠侧边栏，悬停查看每卡计算进程",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "plugin",
+    "gpu",
+    "nvidia-smi",
+    "monitor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ramond-Z/dsh-gpu-monitor.git"
+  }
+}
