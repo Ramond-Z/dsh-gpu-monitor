@@ -9,7 +9,7 @@ DeepSeek Harness 插件：利用 `nvidia-smi` 实时监控 **多台机器** 的 
   - 方块上写实时功率（W）
 - **鼠标悬停方块 ~0.5s** → 显示该卡上的**计算进程**：属主 / PID / 占用显存 / 命令行（触摸设备点按查看）
 - 面板**顶部把手可上下拖动**调整面板高度（64px ~ 90vh，记忆在 localStorage；双击把手恢复默认 42vh 上限）
-- **拖动分组表头**可调整服务器上下顺序（⠿ 提示；顺序记忆在 localStorage `dsh-gpu-monitor:order`，刷新后保持）
+- **拖动分组表头**可调整服务器上下顺序（⠿ 提示）。顺序**宿主侧持久化**（sidecar 写入 `~/.dsh/gpu-monitor-order.json`，带时间戳），跨浏览器/设备共享"上次退出时的顺序"；本浏览器同时缓存于 localStorage（`dsh-gpu-monitor:order`），sidecar 短暂离线时仍生效，恢复后自动回同步
 
 手机/电脑浏览器均可用，主题跟随系统深浅色。
 
@@ -66,6 +66,7 @@ setsid nohup node lib/sidecar.mjs >> /tmp/dsh-gpu-monitor-sidecar.log 2>&1 < /de
 | `GPU_MONITOR_DISCOVER_INTERVAL_MS` | `60000` | 重新探测 server 列表间隔 |
 | `GPU_MONITOR_QUERY_TIMEOUT_MS` | `8000` | 每台机器查询超时 |
 | `GPU_MONITOR_PROBE_TIMEOUT_MS` | `4000` | 探测超时 |
+| `GPU_MONITOR_ORDER_FILE` | `~/.dsh/gpu-monitor-order.json` | 分组顺序持久化文件 |
 
 浏览器数据源优先级：**同源 `/gpu-status.json`**（sidecar 写入，无 CORS）→ `/gpu/status`（宿主）→ 可选绝对地址。拉取失败时**沿用上次数据**并显示小黄条提示，不会清空/报红；仅首次加载完全失败才显示红色错误。绝对地址覆盖：URL 加 `?gpuMonitorSidecar=http://host:port/status`，或页面里 `window.__DSH_GPU_MONITOR__ = { sidecarUrl: "…" }`（空串 = 禁用）。
 
