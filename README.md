@@ -15,8 +15,9 @@ DeepSeek Harness 插件：利用 `nvidia-smi` 实时监控 **多台机器** 的 
 
 ```
 浏览器(侧边栏方块图)
-  ├─ fetch 3s → sidecar http://127.0.0.1:3499/status  ── 多机数据（.ssh/config 所有 GPU server + 本机）
-  └─ 回退 → /gpu/status (主服务 3080 同源路由)          ── 本机/单机数据
+  ├─ fetch 3s → /gpu-status.json  同源桥（sidecar 写入 dsh 前端 dist，无 CORS，远程浏览器也可用）
+  ├─ 回退 → /gpu/status           主服务 3080 同源路由（本机/单机数据）
+  └─ 可选 → ?gpuMonitorSidecar=…  绝对地址 sidecar（远程部署覆盖）
                                     │
                     sidecar（独立进程，可随时启停，不影响 dsh）
                                     └─ nvidia-smi + ps / ssh → 本机 + 各 GPU server
@@ -58,12 +59,13 @@ setsid nohup node lib/sidecar.mjs >> /tmp/dsh-gpu-monitor-sidecar.log 2>&1 < /de
 | `GPU_MONITOR_HOST` | `127.0.0.1` | 监听地址；远程浏览器访问时改 `0.0.0.0` |
 | `GPU_MONITOR_SSH_CONFIG` | `~/.ssh/config` | ssh config 路径 |
 | `GPU_MONITOR_INCLUDE_LOCAL` | `1` | 是否同时查询本机 nvidia-smi（`0` 关闭） |
+| `GPU_MONITOR_JSON_PATH` | 自动探测 | 同源桥 JSON 写入路径（dsh 前端 dist 下 `gpu-status.json`） |
 | `GPU_MONITOR_INTERVAL_MS` | `3000` | 查询间隔 |
 | `GPU_MONITOR_DISCOVER_INTERVAL_MS` | `60000` | 重新探测 server 列表间隔 |
 | `GPU_MONITOR_QUERY_TIMEOUT_MS` | `8000` | 每台机器查询超时 |
 | `GPU_MONITOR_PROBE_TIMEOUT_MS` | `4000` | 探测超时 |
 
-浏览器端 sidecar 地址覆盖：URL 加 `?gpuMonitorSidecar=http://host:port/status`，或页面里 `window.__DSH_GPU_MONITOR__ = { sidecarUrl: "…" }`（空串 = 禁用 sidecar）。默认 `http://127.0.0.1:3499/status`（浏览器与 dsh 同机即可用；远程访问需自行转发端口或设置覆盖地址）。
+浏览器数据源优先级：**同源 `/gpu-status.json`**（sidecar 写入，无 CORS）→ `/gpu/status`（宿主）→ 可选绝对地址。拉取失败时**沿用上次数据**并显示小黄条提示，不会清空/报红；仅首次加载完全失败才显示红色错误。绝对地址覆盖：URL 加 `?gpuMonitorSidecar=http://host:port/status`，或页面里 `window.__DSH_GPU_MONITOR__ = { sidecarUrl: "…" }`（空串 = 禁用）。
 
 ## 配置（profile 的 cordis.patch.yml）
 
