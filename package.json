@@ -7,6 +7,8 @@
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
+    "./sidecar": "./lib/sidecar.mjs",
+    "./sshconfig": "./lib/sshconfig.mjs",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -15,7 +17,8 @@
     "cordis.patch.yml"
   ],
   "scripts": {
-    "test": "node --test \"test/*.test.mjs\""
+    "test": "node --test \"test/*.test.mjs\"",
+    "sidecar": "node lib/sidecar.mjs"
   },
   "dsh": {
     "bundle": {

@@ -6,3 +6,8 @@
         intervalMs: 3000
         queryTimeoutMs: 8000
         sshTarget: ""
+        useSshConfig: true       # 解析 ~/.ssh/config，探测其中可用的 GPU server 一并监控
+        sshConfigPath: ""        # 留空 = ~/.ssh/config（可用 GPU_MONITOR_SSH_CONFIG 覆盖）
+        includeLocal: true       # 同时监控本机 nvidia-smi
+        discoverIntervalMs: 60000
+        probeTimeoutMs: 4000
