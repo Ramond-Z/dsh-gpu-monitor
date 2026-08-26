@@ -1,9 +1,30 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMonitorEngine } from "../lib/engine.mjs";
-import { createMonitorServer } from "../lib/server.mjs";
+import { createMonitorServer, makeStateHandler } from "../lib/server.mjs";
 
 const mkServer = (id, ok = true) => ({ host: id, label: id, ok, at: new Date().toISOString(), gpus: [] });
+
+test("makeStateHandler serves the same wire shape as engine.getState", async () => {
+  const engine = createMonitorEngine({
+    useSshConfig: false,
+    includeLocal: true,
+    query: async () => [mkServer("local"), mkServer("gpu01")],
+  });
+  await engine.tick();
+  // 通过 node:http 的 ServerResponse 桩调用（宿主插件也用同一个处理器）
+  let body = null;
+  let status = 0;
+  const res = {
+    writeHead: (s) => (status = s),
+    end: (b) => (body = JSON.parse(b)),
+  };
+  makeStateHandler(engine)(null, res);
+  assert.equal(status, 200);
+  assert.deepEqual(body.servers.map((s) => s.host), ["local", "gpu01"]);
+  assert.deepEqual(body.order, engine.getState().order);
+  engine.stop();
+});
 
 test("monitor server serves status, UI and order over HTTP", async () => {
   const engine = createMonitorEngine({
@@ -57,6 +78,10 @@ test("monitor server serves status, UI and order over HTTP", async () => {
     const rfState = await rf.json();
     assert.equal(rfState.servers.length, 3);
     assert.ok(rfState.at);
+    // /health 上报实际监听端口（port=0 随机时不得报 0）
+    const health = await (await fetch(`${base}/health`)).json();
+    assert.equal(health.port, srv.port);
+    assert.ok(health.port > 0);
   } finally {
     await srv.close();
     engine.stop();

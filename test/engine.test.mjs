@@ -93,6 +93,48 @@ test("engine legacy single-target mode via sshTarget string", async () => {
   engine.stop();
 });
 
+test("engine refresh returns the fresh snapshot after a completed query", async () => {
+  let n = 0;
+  const engine = createMonitorEngine({
+    useSshConfig: false,
+    includeLocal: true,
+    query: async () => {
+      n++;
+      await new Promise((r) => setTimeout(r, 20));
+      return [mkServer(`local-${n}`)];
+    },
+  });
+  await engine.tick();
+  const before = engine.getState().servers[0].host;
+  const st = await engine.refresh();
+  assert.equal(st.servers[0].host, `local-${n}`);
+  assert.notEqual(st.servers[0].host, before, "refresh 应返回新查询结果");
+  engine.stop();
+});
+
+test("engine refresh queues a re-tick while a query is running", async () => {
+  let calls = 0;
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const engine = createMonitorEngine({
+    useSshConfig: false,
+    query: async () => {
+      calls++;
+      await gate; // 第一次查询卡住，模拟慢查询
+      return [mkServer("local")];
+    },
+  });
+  const p1 = engine.tick(); // 不 await：让查询卡在 gate 上
+  while (calls < 1) await new Promise((r) => setTimeout(r, 5));
+  const p2 = engine.refresh(); // 查询进行中 → 应排队一次补查
+  release();
+  await p1;
+  const st = await p2;
+  assert.equal(st.ok, true);
+  assert.equal(calls, 2, "refresh 应触发一次补查");
+  engine.stop();
+});
+
 test("engine keeps servers across transient discovery failures, removes after repeated fails", async () => {
   const dir = mkdtempSync(join(tmpdir(), "dsh-engine-"));
   try {

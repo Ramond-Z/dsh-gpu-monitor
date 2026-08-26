@@ -3,10 +3,9 @@
 // 复用共享监控引擎 + HTTP 传输层：引擎在应用进程内运行，面板/窗口加载本地 UI。
 import { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, screen, ipcMain } from "electron";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { createMonitorEngine } from "../lib/engine.mjs";
 import { createMonitorServer } from "../lib/server.mjs";
+import { resolveEngineConfigFromEnv } from "../lib/config.mjs";
 import { makeCrystalPng, iconSvgMarkup } from "./icon.mjs";
 
 const log = (...a) => console.log(new Date().toISOString(), "[gpu-monitor]", ...a);
@@ -15,10 +14,6 @@ const log = (...a) => console.log(new Date().toISOString(), "[gpu-monitor]", ...
 nativeTheme.themeSource = "dark";
 
 const UI_MODE = process.env.GPU_MONITOR_UI_MODE || "tray"; // tray（默认） | window
-const INCLUDE_LOCAL =
-  process.env.GPU_MONITOR_INCLUDE_LOCAL !== undefined
-    ? process.env.GPU_MONITOR_INCLUDE_LOCAL !== "0"
-    : process.platform !== "darwin";
 
 // 菜单栏常驻：模块加载时（app ready 之前）就设置 accessory 策略，避免启动瞬间
 // Dock 弹出图标再消失的闪烁（此前 dock.hide 在引擎启动后才调用，有 1~3s 窗口）
@@ -91,15 +86,17 @@ async function start() {
     try { app.setActivationPolicy("accessory"); } catch {}
     try { app.dock?.hide(); } catch {}
   }
+  // 环境变量 → 引擎配置（默认值与变量名见 lib/config.mjs；Electron 端口默认 0 = 随机，避免冲突）
+  const cfg = resolveEngineConfigFromEnv(process.env, process.platform, { portDefault: 0 });
   engine = createMonitorEngine({
-    intervalMs: Number(process.env.GPU_MONITOR_INTERVAL_MS || 3000),
-    timeoutMs: Number(process.env.GPU_MONITOR_QUERY_TIMEOUT_MS || 8000),
-    probeTimeoutMs: Number(process.env.GPU_MONITOR_PROBE_TIMEOUT_MS || 4000),
-    discoverIntervalMs: Number(process.env.GPU_MONITOR_DISCOVER_INTERVAL_MS || 60000),
+    intervalMs: cfg.intervalMs,
+    timeoutMs: cfg.timeoutMs,
+    probeTimeoutMs: cfg.probeTimeoutMs,
+    discoverIntervalMs: cfg.discoverIntervalMs,
     useSshConfig: true,
-    sshConfigPath: process.env.GPU_MONITOR_SSH_CONFIG || "",
-    includeLocal: INCLUDE_LOCAL,
-    orderFile: process.env.GPU_MONITOR_ORDER_FILE || join(homedir(), ".dsh", "gpu-monitor-order.json"),
+    sshConfigPath: cfg.sshConfigPath,
+    includeLocal: cfg.includeLocal,
+    orderFile: cfg.orderFile,
     source: "app",
     log,
   });
@@ -107,8 +104,8 @@ async function start() {
 
   server = await createMonitorServer({
     engine,
-    host: "127.0.0.1",
-    port: Number(process.env.GPU_MONITOR_PORT || 0), // 0 = 随机端口，避免冲突
+    host: cfg.host,
+    port: cfg.port, // 0 = 随机端口，避免冲突
     serveUi: true,
     log,
   });

@@ -21,10 +21,12 @@ DSH 插件与 MacBook 独立程序共享同一套核心，宿主/传输层只是
 lib/query.mjs     底层：nvidia-smi/ps 查询、CSV 解析、目标参数（宿主与 sidecar 共用）
 lib/sshconfig.mjs 底层：~/.ssh/config 解析（Include 展开、Host * 默认、first-wins）
 lib/orderstore.mjs 分组顺序持久化（{o, t} 文件存取，时间戳防旧覆盖）
+lib/config.mjs    引擎配置契约：三宿主壳（cordis 插件 / sidecar / Electron）共用的
+                  默认值、环境变量解析与平台规则（macOS 默认不查本机）
 lib/engine.mjs    共享监控引擎：ssh config 探测、周期并行查询、顺序调和、
-                  状态快照与订阅（可注入 query 便于测试）
+                  状态快照与订阅（可注入 query 便于测试；refresh() 返回新快照）
 lib/server.mjs    共享 HTTP 传输层：状态/顺序/独立网页 UI 路由（CLI 与 Electron 共用）
-lib/index.js      DSH 宿主插件（薄壳：启动引擎 + 注册 /gpu/status 路由）
+lib/index.js      DSH 宿主插件（薄壳：启动引擎 + 注册 /gpu/status 路由，处理器与 server.mjs 共享）
 lib/sidecar.mjs   独立进程 CLI（薄壳：引擎 + 传输层 + DSH 同源 JSON 桥）
 electron/main.mjs Electron 原生应用入口（自包含窗口，无需浏览器）
 lib/client.js     浏览器 UI（DSH 侧边栏与独立页面/原生应用共用同一份，零重复）
@@ -174,7 +176,7 @@ npm run macbook        # 等价: bash scripts/macbook.sh
 ## 开发
 
 ```bash
-npm test          # 运行解析单元测试（node:test，19 个用例）
+npm test          # 运行单元测试（node:test，40 个用例）
 npm run sidecar   # 前台运行 sidecar
 ```
 
