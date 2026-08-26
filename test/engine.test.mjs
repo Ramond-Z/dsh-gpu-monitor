@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMonitorEngine } from "../lib/engine.mjs";
@@ -91,4 +91,35 @@ test("engine legacy single-target mode via sshTarget string", async () => {
   assert.equal(st.servers.length, 1);
   assert.equal(st.servers[0].host, "user@gpu01");
   engine.stop();
+});
+
+test("engine keeps servers across transient discovery failures, removes after repeated fails", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-engine-"));
+  try {
+    const cfg = join(dir, "sshconfig");
+    writeFileSync(cfg, "Host g1\n  HostName 10.0.0.1\n  User u\nHost g2\n  HostName 10.0.0.2\n  User u\n");
+    let failAll = false;
+    const engine = createMonitorEngine({
+      useSshConfig: true,
+      sshConfigPath: cfg,
+      includeLocal: false,
+      probe: async () => (failAll ? { ok: false, error: "boom" } : { ok: true, error: "" }),
+      query: async ({ servers }) => servers.map((t) => ({ host: t.alias, label: t.alias, ok: true, gpus: [] })),
+    });
+    await engine.discover();
+    assert.equal(engine.listServers().length, 2);
+    failAll = true;
+    await engine.discover(); // 第 1 次全失败：保留
+    assert.equal(engine.listServers().length, 2, "一次瞬时失败不应清空列表");
+    await engine.discover(); // 第 2 次连续全失败：移除
+    assert.equal(engine.listServers().length, 0);
+    await engine.tick(); // tick 把诊断信息写入 state
+    assert.ok(engine.getState().message.includes("均不可达"), "无 server 时应给出诊断信息");
+    failAll = false;
+    await engine.discover(); // 恢复后可重新发现
+    assert.equal(engine.listServers().length, 2);
+    engine.stop();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
