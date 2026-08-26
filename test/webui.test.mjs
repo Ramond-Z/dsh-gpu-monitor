@@ -10,6 +10,16 @@ test("index.html carries the shim boot sequence", () => {
   assert.ok(INDEX_HTML.includes("__DSH_SHIM_BOOT__"));
 });
 
+test("standalone page follows system theme (not hardcoded dark)", () => {
+  // 不再写死深色：data-gpu-theme 由 client.js 按系统偏好维护
+  assert.ok(!INDEX_HTML.includes('data-gpu-theme="dark"'));
+  assert.ok(!INDEX_HTML.includes('data-gpu-theme="light"'));
+  assert.ok(!INDEX_HTML.includes('color-scheme: dark'));
+  // 浅色样式走纯媒体查询，随系统切换
+  assert.ok(INDEX_HTML.includes("@media (prefers-color-scheme: light)"));
+  assert.ok(INDEX_HTML.includes("color-scheme: light dark"));
+});
+
 test("shim script is syntactically valid and defines the expected globals", () => {
   // 语法校验（不执行，避免 DOM 依赖）
   // eslint-disable-next-line no-new-func

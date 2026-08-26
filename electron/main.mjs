@@ -10,8 +10,9 @@ import { makeCrystalPng, iconSvgMarkup } from "./icon.mjs";
 
 const log = (...a) => console.log(new Date().toISOString(), "[gpu-monitor]", ...a);
 
-// 监控面板固定深色（与页面 data-gpu-theme=dark 一致），不受系统浅色模式影响
-nativeTheme.themeSource = "dark";
+// 主题跟随系统（nativeTheme 默认 "system"）：页面（webui.mjs）与组件（client.js）随系统切换深浅色，
+// 不在此处强制深色。窗口背景色按当前系统模式取值，避免加载瞬间底色与页面不一致。
+const WINDOW_BG = () => (nativeTheme.shouldUseDarkColors ? "#0f1116" : "#eef0f5");
 
 const UI_MODE = process.env.GPU_MONITOR_UI_MODE || "tray"; // tray（默认） | window
 
@@ -137,7 +138,7 @@ function openWindowMode(url) {
     minWidth: 240,
     minHeight: 320,
     title: "GPU 监控",
-    backgroundColor: "#0f1116",
+    backgroundColor: WINDOW_BG(),
     autoHideMenuBar: true,
     webPreferences: baseWebPreferences(),
   });
@@ -176,7 +177,7 @@ async function setupTrayMode(url) {
     resizable: true,
     alwaysOnTop: true,
     fullscreenable: false,
-    backgroundColor: "#0f1116",
+    backgroundColor: WINDOW_BG(),
     webPreferences: baseWebPreferences(),
   });
   win.loadURL(url);

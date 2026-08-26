@@ -215,6 +215,7 @@ npm run macbook        # 等价: bash scripts/macbook.sh
 
 两种方式都解析 MacBook 的 `~/.ssh/config`，探测其中可用的 GPU server 并实时监控（方块图、悬停看进程、拖动排序、高度调整、顶栏状态条全部可用）。
 
+- **主题自动跟随 macOS 系统深浅色**（原生应用与网页模式一致；菜单栏图标为 template 图片同样随系统变色）
 - 默认**不查询本机**（macOS 无 nvidia-smi，按平台自动关闭）；`GPU_MONITOR_INCLUDE_LOCAL=1` 可强制开启
 - 需 MacBook 到各 GPU server 已配 SSH 免密登录（与 Linux 上一致）
 - 分组顺序同样持久化在 `~/.dsh/gpu-monitor-order.json`，跨浏览器/设备共享
