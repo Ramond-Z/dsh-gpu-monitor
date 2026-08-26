@@ -34,7 +34,7 @@ let tray = null;
 let shields = []; // 点击拦截层（透明全屏窗，用于"点面板外自动收起"）
 let quitting = false;
 
-/** 把 SVG 栅格化成 PNG 的离屏渲染（nativeImage 不支持 SVG 数据 URL）。 */
+/** 把 SVG 栅格化成 NativeImage 的离屏渲染（nativeImage 不支持 SVG 数据 URL）。 */
 async function rasterizeSvg(size) {
   const w = new BrowserWindow({
     show: false,
@@ -60,22 +60,27 @@ async function rasterizeSvg(size) {
   );
   const img = await w.webContents.capturePage();
   w.destroy();
-  return img.isEmpty() ? null : img.toPNG();
+  return img.isEmpty() ? null : img;
 }
 
 /** 菜单栏图标：electron/icon.svg（freeicon.com 单色 GPU 图标）栅格化成 template PNG。 */
 async function makeTrayIcon() {
+  const TRAY_PT = 16; // 菜单栏图标显示尺寸(pt)，比系统图标(18)略小、留出呼吸感
   try {
-    const png = await rasterizeSvg(36); // 2x 渲染，按实际像素算 scaleFactor，Retina 清晰
-    if (png) {
-      const img = nativeImage.createFromBuffer(png, { scaleFactor: 2 });
+    const img0 = await rasterizeSvg(32); // 按 16pt 的 2x 渲染
+    if (img0) {
+      // 离屏截图在 Retina 上可能是 2x/4x 像素，必须按实际像素算 scaleFactor，
+      // 否则硬编码会导致图标显示成 2 倍大
+      const size = img0.getSize();
+      const scale = size.width > 0 ? size.width / TRAY_PT : 2;
+      const img = nativeImage.createFromBuffer(img0.toPNG(), { scaleFactor: scale });
       img.setTemplateImage(true);
       return img;
     }
   } catch (e) {
     log("SVG 图标渲染失败，退回水晶球:", String(e));
   }
-  const fb = nativeImage.createFromBuffer(makeCrystalPng(18));
+  const fb = nativeImage.createFromBuffer(makeCrystalPng(16));
   fb.setTemplateImage(true);
   return fb;
 }
