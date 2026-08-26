@@ -28,8 +28,8 @@ function chunk(type, data) {
 }
 
 /**
- * 生成 🔮 水晶球线稿 RGBA PNG（黑色 + alpha，template）。
- * 元素：球体轮廓（约 2px 线宽，左上留高光缺口）、底座（托盘线框）、两个星点（+）。
+ * 生成 🔮 水晶球 RGBA PNG（黑色 + alpha，template）。
+ * 实心剪影风格（贴合 macOS 菜单栏常规图标）：实心球体 + 左上高光月牙镂空 + 实心底座。
  * @param {number} size 边长（默认 18；打包应用图标用 1024）
  * @returns {Buffer}
  */
@@ -46,36 +46,34 @@ export function makeCrystalPng(size = 18) {
 
   const cx = size * 0.5;
   const cy = size * 0.38;
-  const r = size * 0.24;
-  const stroke = Math.max(1, Math.round(size * 0.09)); // ~2px @18 / ~92px @1024
-  const dist = (x, y) => Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
-  const onCircle = (x, y) => Math.abs(dist(x, y) - r) <= stroke / 2;
-
-  // 底座：2px 线框托盘（顶横线 + 底横线 + 两侧竖线）
+  const r = size * 0.30;
+  const inCircle = (x, y) => (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
+  // 高光：左上小圆镂空 → 月牙
+  const hx = cx - r * 0.45;
+  const hy = cy - r * 0.52;
+  const hr = r * 0.30;
+  const inHighlight = (x, y) => (x - hx) ** 2 + (y - hy) ** 2 <= hr * hr;
+  // 底座：实心圆角矩形（与球体底部相接）
   const L = (v) => Math.round(v);
-  const baseTop = L(size * 0.70);
-  const baseBottom = L(size * 0.82) + 1;
-  const bx0 = L(cx - size * 0.20);
-  const bx1 = L(cx + size * 0.20);
-  const onBase = (x, y) => {
-    const onTop = (y === baseTop || y === baseTop + 1) && x >= bx0 && x <= bx1;
-    const onBottom = (y === baseBottom || y === baseBottom + 1) && x >= bx0 && x <= bx1;
-    const onSide = (x === bx0 || x === bx0 + 1 || x === bx1 || x === bx1 + 1) && y >= baseTop && y <= baseBottom + 1;
-    return onTop || onBottom || onSide;
+  const bx0 = L(cx - r * 0.55);
+  const bx1 = L(cx + r * 0.55);
+  const by0 = L(cy + r - size * 0.03);
+  const by1 = L(size * 0.84);
+  const inBase = (x, y) => {
+    if (x < bx0 || x > bx1 || y < by0 || y > by1) return false;
+    const nx = Math.max(bx0 + 1, Math.min(x, bx1 - 1));
+    const ny = Math.max(by0 + 1, Math.min(y, by1 - 1));
+    const dx = x - nx;
+    const dy = y - ny;
+    return dx * dx + dy * dy <= 1; // 圆角 r=1
   };
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      if (!onCircle(x, y)) continue;
-      // 左上 45° 高光缺口
-      const ang = Math.atan2(y - cy, x - cx);
-      if (ang < -2.2 && ang > -2.8) continue;
-      set(x, y, 255);
-    }
-  }
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      if (onBase(x, y)) set(x, y, 255);
+      if (inCircle(x, y) || inBase(x, y)) {
+        if (inHighlight(x, y)) continue;
+        set(x, y, 255);
+      }
     }
   }
 
