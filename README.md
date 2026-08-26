@@ -130,13 +130,18 @@ setsid nohup node lib/sidecar.mjs >> /tmp/dsh-gpu-monitor-sidecar.log 2>&1 < /de
 
 无需 DSH、无需本机 `nvidia-smi`（macOS 也没有）：把仓库拷到 MacBook，装好 Node ≥ 22，**两种运行方式**：
 
-### 方式 A：原生应用（推荐，自包含窗口，无需浏览器）
+### 方式 A：原生应用（推荐，菜单栏常驻）
 
 ```bash
 npm install            # 首次：拉取 electron（仅开发依赖，不影响 dsh 插件安装）
-npm run app            # 弹出原生窗口：默认宽度按 8 卡 4×2 两排刚好放下（252px），
-                       # 监控区纵向占满整个窗口（无高度把手）；可拖动调整窗口大小
+npm run app            # 菜单栏常驻：Dock 图标隐藏，点菜单栏芯片图标弹出监控面板
 ```
+
+- **左键菜单栏图标**：弹出 / 收起监控面板（面板跟随图标定位、不抢焦点，点击面板外自动收起）
+- **右键菜单栏图标**：显示/隐藏、退出
+- 引擎常驻后台持续刷新，面板随时弹出即最新数据；默认宽度按 8 卡 4×2 两排刚好放下（252px），面板可手动拉大
+- 想要独立大窗口（非常驻）：`npm run app:window`
+- 打包成可双击的 `.app`/`.dmg`：`npm run dist`（`dist/GPU Monitor-*.dmg`）
 
 > **安装很慢？** 仓库自带 `.npmrc`（electron 二进制走 npmmirror 镜像）。若已卡住，先 Ctrl-C，
 > 然后 `npm install --no-audit --no-fund` 重试；若只是二进制没下完，可单独补：
