@@ -4,7 +4,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMonitorEngine } from "../lib/engine.mjs";
-
 const mkServer = (id, ok = true) => ({ host: id, label: id, ok, at: new Date().toISOString(), gpus: [] });
 
 test("engine produces unified servers-shape state with arrival order", async () => {
@@ -160,6 +159,129 @@ test("engine keeps servers across transient discovery failures, removes after re
     failAll = false;
     await engine.discover(); // 恢复后可重新发现
     assert.equal(engine.listServers().length, 2);
+    engine.stop();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("engine setSettings updates effective settings, applies immediately and persists", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-engine-"));
+  try {
+    const seen = [];
+    const engine = createMonitorEngine({
+      useSshConfig: false,
+      includeLocal: true,
+      settingsFile: join(dir, "settings.json"),
+      query: async (ctx) => {
+        seen.push({ includeLocal: ctx.includeLocal, timeoutMs: ctx.timeoutMs });
+        return [mkServer("local")];
+      },
+    });
+    await engine.tick();
+    assert.equal(seen[0].timeoutMs, 8000);
+    const out = engine.setSettings({ intervalMs: 1500, timeoutMs: 9000, includeLocal: false });
+    assert.equal(out.settings.intervalMs, 1500);
+    assert.equal(out.settings.timeoutMs, 9000);
+    assert.equal(out.settings.includeLocal, false);
+    assert.equal(out.settings.enabledServers, null);
+    // setSettings 已触发查询链；refresh() 等它完成后返回，保证读到新设置下的查询
+    await engine.refresh();
+    const last = seen[seen.length - 1];
+    assert.equal(last.timeoutMs, 9000);
+    assert.equal(last.includeLocal, false);
+    // 重启后从文件恢复（文件优先于启动配置）
+    const reloaded = createMonitorEngine({
+      useSshConfig: false,
+      includeLocal: true,
+      intervalMs: 5000,
+      settingsFile: join(dir, "settings.json"),
+      query: async () => [mkServer("local")],
+    });
+    const gs = reloaded.getSettings();
+    assert.equal(gs.intervalMs, 1500, "设置文件里的键优先于启动配置");
+    assert.equal(gs.timeoutMs, 9000);
+    assert.equal(gs.includeLocal, false);
+    reloaded.stop();
+    engine.stop();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("engine setSettings rejects invalid values without changing anything", async () => {
+  const engine = createMonitorEngine({
+    useSshConfig: false,
+    includeLocal: true,
+    query: async () => [mkServer("local")],
+  });
+  await engine.tick();
+  assert.throws(() => engine.setSettings({ intervalMs: 1 }), /intervalMs/);
+  assert.throws(() => engine.setSettings({ includeLocal: "x" }), /includeLocal/);
+  assert.equal(engine.getSettings().intervalMs, 3000, "非法补丁不应改动现有设置");
+  engine.stop();
+});
+
+test("engine enabledServers filters which servers are queried", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-engine-"));
+  try {
+    const cfg = join(dir, "sshconfig");
+    writeFileSync(cfg, "Host g1\n  HostName 10.0.0.1\n  User u\nHost g2\n  HostName 10.0.0.2\n  User u\n");
+    const queried = [];
+    const engine = createMonitorEngine({
+      useSshConfig: true,
+      sshConfigPath: cfg,
+      includeLocal: false,
+      probe: async () => ({ ok: true, error: "" }),
+      query: async ({ servers }) => {
+        queried.push(servers.map((s) => s.alias));
+        return servers.map((t) => ({ host: t.alias, label: t.alias, ok: true, gpus: [] }));
+      },
+    });
+    await engine.discover();
+    await engine.tick();
+    assert.deepEqual(queried.at(-1), ["g1", "g2"], "默认全部启用");
+    // 只启用 g1
+    engine.setSettings({ enabledServers: ["g1"] });
+    await engine.tick();
+    assert.deepEqual(queried.at(-1), ["g1"], "只查询选中的 server");
+    // 空数组 = 一个都不查
+    engine.setSettings({ enabledServers: [] });
+    await engine.tick();
+    assert.deepEqual(queried.at(-1), [], "空选取 = 不查询任何 server");
+    // 候选列表仍包含全部（含 enabled 标记）
+    const cands = engine.serverCandidates();
+    assert.deepEqual(cands.map((c) => c.id), ["g1", "g2"]);
+    assert.deepEqual(cands.map((c) => c.enabled), [false, false]);
+    // 恢复 null = 全部
+    engine.setSettings({ enabledServers: null });
+    await engine.tick();
+    assert.deepEqual(queried.at(-1), ["g1", "g2"]);
+    engine.stop();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("engine serverCandidates reports reachability from probes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-engine-"));
+  try {
+    const cfg = join(dir, "sshconfig");
+    writeFileSync(cfg, "Host g1\n  HostName 10.0.0.1\n  User u\nHost g2\n  HostName 10.0.0.2\n  User u\n");
+    const engine = createMonitorEngine({
+      useSshConfig: true,
+      sshConfigPath: cfg,
+      includeLocal: false,
+      probe: async (t) => (t.alias === "g1" ? { ok: true, error: "" } : { ok: false, error: "ssh: 拒绝连接" }),
+      query: async ({ servers }) => servers.map((t) => ({ host: t.alias, label: t.alias, ok: true, gpus: [] })),
+    });
+    await engine.discover();
+    const cands = engine.serverCandidates();
+    assert.deepEqual(cands.map((c) => c.id), ["g1", "g2"]);
+    assert.equal(cands[0].ok, true);
+    assert.equal(cands[1].ok, false);
+    assert.match(cands[1].error, /拒绝连接/);
+    assert.deepEqual(cands.map((c) => c.enabled), [true, true]);
     engine.stop();
   } finally {
     rmSync(dir, { recursive: true, force: true });

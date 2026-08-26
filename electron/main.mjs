@@ -97,6 +97,7 @@ async function start() {
     sshConfigPath: cfg.sshConfigPath,
     includeLocal: cfg.includeLocal,
     orderFile: cfg.orderFile,
+    settingsFile: cfg.settingsFile,
     source: "app",
     log,
   });

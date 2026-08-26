@@ -44,3 +44,13 @@ _Avoid_: 扫描（与配置文件扫描混淆）
 
 **空闲 GPU**:
 利用率 <5% 且显存占用 <1G 且无计算进程的 GPU；用于顶栏与分组表头的"x/y 张 GPU"统计。
+
+**设置（运行时设置）**:
+设置页可调整的参数集合：查询间隔 / 查询超时 / 探测超时 / 重新探测间隔 / 是否监控本机 / ssh config 路径 / 启用的 server 列表（`enabledServers`）。持久化在 `~/.dsh/gpu-monitor-settings.json`（可被 `GPU_MONITOR_SETTINGS_FILE` 覆盖），**文件里存在的键优先于启动配置**（env / cordis 只作初始值）。
+_Avoid_: 配置（保留给 cordis.patch.yml / 环境变量这类启动期配置）
+
+**设置页**:
+面板 ⚙（停靠模式工具栏）或顶栏 ⚙（独立页/Electron）打开的弹窗：修改参数 + 勾选要监控的 server。保存 = `POST /settings` → 引擎校验、立即生效并落盘；打开 = `GET /settings` → 生效设置 + 候选 server 列表。
+
+**候选 server**:
+ssh config 解析出的全部主机（**含探测不可达的**），设置页逐一列出并标注可达状态。`enabledServers` 为 `null` = 全部启用；数组 = 显式选取，未勾选的主机不查询也不显示；恢复可达的已勾选主机自动纳入监控。

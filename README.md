@@ -21,16 +21,20 @@ DSH 插件与 MacBook 独立程序共享同一套核心，宿主/传输层只是
 lib/query.mjs     底层：nvidia-smi/ps 查询、CSV 解析、目标参数（宿主与 sidecar 共用）
 lib/sshconfig.mjs 底层：~/.ssh/config 解析（Include 展开、Host * 默认、first-wins）
 lib/orderstore.mjs 分组顺序持久化（{o, t} 文件存取，时间戳防旧覆盖）
+lib/settings.mjs  运行时设置：设置页可调参数 + server 选取（校验、持久化，见下方"设置页"）
 lib/config.mjs    引擎配置契约：三宿主壳（cordis 插件 / sidecar / Electron）共用的
                   默认值、环境变量解析与平台规则（macOS 默认不查本机）
 lib/engine.mjs    共享监控引擎：ssh config 探测、周期并行查询、顺序调和、
-                  状态快照与订阅（可注入 query 便于测试；refresh() 返回新快照）
-lib/server.mjs    共享 HTTP 传输层：状态/顺序/独立网页 UI 路由（CLI 与 Electron 共用）
-lib/index.js      DSH 宿主插件（薄壳：启动引擎 + 注册 /gpu/status 路由，处理器与 server.mjs 共享）
+                  状态快照与订阅（可注入 query 便于测试；refresh() 返回新快照；
+                  setSettings() 让设置页的修改立即生效并持久化）
+lib/server.mjs    共享 HTTP 传输层：状态/顺序/设置/独立网页 UI 路由（CLI 与 Electron 共用）
+lib/index.js      DSH 宿主插件（薄壳：启动引擎 + 注册 /gpu/status、/settings 路由，
+                  处理器与 server.mjs 共享）
 lib/sidecar.mjs   独立进程 CLI（薄壳：引擎 + 传输层 + DSH 同源 JSON 桥）
 electron/main.mjs Electron 原生应用入口（自包含窗口，无需浏览器）
-lib/client.js     浏览器 UI（DSH 侧边栏与独立页面/原生应用共用同一份，零重复）
-lib/webui.mjs     独立页面资源（index.html + 顶栏状态条 + DSH shim）
+lib/client.js     浏览器 UI（DSH 侧边栏与独立页面/原生应用共用同一份，零重复；
+                  含设置弹窗）
+lib/webui.mjs     独立页面资源（index.html + 顶栏状态条 + ⚙ 设置按钮 + DSH shim）
 ```
 
 ## 架构
@@ -45,9 +49,10 @@ lib/webui.mjs     独立页面资源（index.html + 顶栏状态条 + DSH shim�
                                     └─ nvidia-smi + ps / ssh → 本机 + 各 GPU server
 ```
 
-- **宿主半部** `lib/index.js`：周期查询 nvidia-smi（用量 + 计算进程 + ps 属主），通过 `ctx.webServer.register` 注册同源路由 `/gpu/status`。配置了 `useSshConfig` 时自动解析 `~/.ssh/config`、探测可用 GPU server 并全部纳入监控。
+- **宿主半部** `lib/index.js`：周期查询 nvidia-smi（用量 + 计算进程 + ps 属主），通过 `ctx.webServer.register` 注册同源路由 `/gpu/status` 与 `/settings`。配置了 `useSshConfig` 时自动解析 `~/.ssh/config`、探测可用 GPU server 并全部纳入监控。
 - **sidecar** `lib/sidecar.mjs`：独立 Node 进程（不依赖 dsh 重启）。当宿主半部还是旧代码（无法热加载、不能重启 dsh）时，由它提供多机数据；等宿主侧重启后 `/gpu/status` 原生返回多机数据，sidecar 可停可留。
 - **浏览器半部** `lib/client.js`：`__ModuleLoader__` 模块，经 `sidebar.footer.action` 槽位停靠侧边栏底部，悬停提示为纯 DOM。数据源优先 sidecar，失败自动回退 `/gpu/status`；两者都兼容（`/gpu/status` 返回旧扁平结构时按单机“本机”分组渲染）。
+- **设置页**（见下方）：面板 ⚙ 按钮（停靠模式）或顶栏 ⚙（独立页/Electron）打开设置弹窗，调整参数并勾选要监控的 server；修改写入 `~/.dsh/gpu-monitor-settings.json` 立即生效、重启保留。
 
 ## 安装与启动
 
@@ -87,8 +92,30 @@ setsid nohup node lib/sidecar.mjs >> /tmp/dsh-gpu-monitor-sidecar.log 2>&1 < /de
 | `GPU_MONITOR_QUERY_TIMEOUT_MS` | `8000` | 每台机器查询超时 |
 | `GPU_MONITOR_PROBE_TIMEOUT_MS` | `4000` | 探测超时 |
 | `GPU_MONITOR_ORDER_FILE` | `~/.dsh/gpu-monitor-order.json` | 分组顺序持久化文件 |
+| `GPU_MONITOR_SETTINGS_FILE` | `~/.dsh/gpu-monitor-settings.json` | 运行时设置文件（设置页修改的持久化位置） |
 
 浏览器数据源优先级：**同源 `/gpu-status.json`**（sidecar 写入，无 CORS）→ `/gpu/status`（宿主）→ 可选绝对地址。拉取失败时**沿用上次数据**并显示小黄条提示，不会清空/报红；仅首次加载完全失败才显示红色错误。绝对地址覆盖：URL 加 `?gpuMonitorSidecar=http://host:port/status`，或页面里 `window.__DSH_GPU_MONITOR__ = { sidecarUrl: "…" }`（空串 = 禁用）。
+
+## 设置页（⚙）
+
+面板 ⚙（停靠模式，位于方块区上方）或顶栏 ⚙（独立网页 / Electron）打开设置弹窗，可调整：
+
+| 项 | 说明 | 默认 |
+|---|---|---|
+| 查询间隔 (ms) | 两次查询之间的间隔 | 3000 |
+| 查询超时 (ms) | 每台机器单轮查询超时；单台超时不影响其它机器 | 8000 |
+| 探测超时 (ms) | 判定一台机器是否可用的超时 | 4000 |
+| 重新探测间隔 (ms) | 重新扫描 ssh config 并探测 server 的间隔 | 60000 |
+| 同时监控本机 | 是否查询本机 nvidia-smi（macOS 无 nvidia-smi 时建议关闭） | 平台默认 |
+| SSH 配置路径 | 留空 = `~/.ssh/config` | 平台默认 |
+| 监控的 server | 勾选要监控的机器（**候选含探测不可达的主机**，勾选后恢复可达即自动纳入；不勾选 = 不监控该机器） | 全部 |
+
+保存后写入 `~/.dsh/gpu-monitor-settings.json`（可被 `GPU_MONITOR_SETTINGS_FILE` 覆盖），**立即生效**且重启保留。
+
+- **优先级**：设置文件里存在的键优先于启动配置（环境变量 / cordis.patch.yml）——启动配置只作初始值。
+- **`enabledServers` 语义**：`null` = 全部 server；数组 = 只监控列出的 server。首次保存后即为显式列表：之后在 ssh config 新增的主机默认不监控，需在设置页勾选。
+- **宿主与 sidecar 共用同一设置文件**：DSH 侧边栏与 sidecar/Electron 的修改彼此可见（同一台机器上）。
+- 设置弹窗按数据源候选链读写 `/settings`（同源宿主 → 显式 sidecar → 默认 127.0.0.1:3499），任一可达即生效。
 
 ## 配置（profile 的 cordis.patch.yml）
 
@@ -104,6 +131,8 @@ setsid nohup node lib/sidecar.mjs >> /tmp/dsh-gpu-monitor-sidecar.log 2>&1 < /de
     discoverIntervalMs: 60000  # 重新探测 server 列表间隔
     probeTimeoutMs: 4000   # 探测超时
 ```
+
+> 这些配置只是**初始值**：设置页保存的值（`~/.dsh/gpu-monitor-settings.json`）优先，重启后仍保留（见"设置页"一节）。
 
 ## API
 
@@ -127,6 +156,26 @@ setsid nohup node lib/sidecar.mjs >> /tmp/dsh-gpu-monitor-sidecar.log 2>&1 < /de
 ```
 
 `GET http://127.0.0.1:3499/status`（sidecar）返回同样的 `servers` 结构（`source: "sidecar"`，带 CORS）。
+
+`GET /settings`（宿主同源路由 / sidecar / Electron 都有）—— 当前生效设置 + 候选 server 列表：
+
+```json
+{
+  "ok": true,
+  "settings": {
+    "intervalMs": 3000, "timeoutMs": 8000, "probeTimeoutMs": 4000, "discoverIntervalMs": 60000,
+    "includeLocal": true, "sshConfigPath": "/home/u/.ssh/config",
+    "enabledServers": null, "useSshConfig": true
+  },
+  "candidates": [{ "id": "gpu01", "label": "gpu01", "ok": true, "error": "", "enabled": true }]
+}
+```
+
+`POST /settings`（部分字段即可；非法值返回 400 并给出具体原因）：
+
+```json
+{ "intervalMs": 2000, "enabledServers": ["gpu01", "gpu02"] }
+```
 
 ## 在 MacBook 上独立运行
 
@@ -176,7 +225,7 @@ npm run macbook        # 等价: bash scripts/macbook.sh
 ## 开发
 
 ```bash
-npm test          # 运行单元测试（node:test，40 个用例）
+npm test          # 运行单元测试（node:test，52 个用例）
 npm run sidecar   # 前台运行 sidecar
 ```
 

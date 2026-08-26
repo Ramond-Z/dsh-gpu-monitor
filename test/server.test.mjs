@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createMonitorEngine } from "../lib/engine.mjs";
-import { createMonitorServer, makeStateHandler } from "../lib/server.mjs";
+import { createMonitorServer, makeStateHandler, makeSettingsHandler } from "../lib/server.mjs";
 
 const mkServer = (id, ok = true) => ({ host: id, label: id, ok, at: new Date().toISOString(), gpus: [] });
 
@@ -86,4 +89,75 @@ test("monitor server serves status, UI and order over HTTP", async () => {
     await srv.close();
     engine.stop();
   }
+});
+
+test("monitor server serves settings over HTTP (GET + POST)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-server-"));
+  try {
+    const engine = createMonitorEngine({
+      useSshConfig: false,
+      includeLocal: true,
+      settingsFile: join(dir, "settings.json"),
+      query: async () => [mkServer("local"), mkServer("gpu01")],
+    });
+    await engine.tick();
+    const srv = await createMonitorServer({ engine, port: 0 });
+    const base = `http://127.0.0.1:${srv.port}`;
+    try {
+      // GET：生效设置 + 候选 server（单机模式候选为空）
+      const g = await (await fetch(`${base}/settings`)).json();
+      assert.equal(g.ok, true);
+      assert.equal(g.settings.intervalMs, 3000);
+      assert.equal(g.settings.useSshConfig, false);
+      assert.deepEqual(g.candidates, []);
+      // POST：应用补丁并立即反映到 GET
+      const p = await fetch(`${base}/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intervalMs: 1500, timeoutMs: 9000, includeLocal: false }),
+      });
+      const pj = await p.json();
+      assert.equal(pj.ok, true);
+      assert.equal(pj.settings.intervalMs, 1500);
+      const g2 = await (await fetch(`${base}/settings`)).json();
+      assert.equal(g2.settings.timeoutMs, 9000);
+      assert.equal(g2.settings.includeLocal, false);
+      // 非法补丁 → 400 且不改动
+      const bad = await fetch(`${base}/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intervalMs: 1 }),
+      });
+      assert.equal(bad.status, 400);
+      const g3 = await (await fetch(`${base}/settings`)).json();
+      assert.equal(g3.settings.intervalMs, 1500, "非法补丁不应改动现有设置");
+    } finally {
+      await srv.close();
+      engine.stop();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("makeSettingsHandler serves settings via the same handler shape the host plugin registers", async () => {
+  const engine = createMonitorEngine({
+    useSshConfig: false,
+    includeLocal: true,
+    query: async () => [mkServer("local")],
+  });
+  await engine.tick();
+  let body = null;
+  let status = 0;
+  const res = {
+    writeHead: (s) => (status = s),
+    end: (b) => (body = JSON.parse(b)),
+  };
+  // GET 路径（req.method 非 POST）
+  await makeSettingsHandler(engine)({ method: "GET" }, res);
+  assert.equal(status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.settings.includeLocal, true);
+  assert.ok(Array.isArray(body.candidates));
+  engine.stop();
 });
