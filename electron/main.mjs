@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createMonitorEngine } from "../lib/engine.mjs";
 import { createMonitorServer } from "../lib/server.mjs";
-import { makeIconPng } from "./icon.mjs";
+import { makeCrystalPng } from "./icon.mjs";
 
 const log = (...a) => console.log(new Date().toISOString(), "[gpu-monitor]", ...a);
 
@@ -26,48 +26,11 @@ let tray = null;
 let shields = []; // 点击拦截层（透明全屏窗，用于"点面板外自动收起"）
 let quitting = false;
 
-/**
- * 菜单栏图标：🔮 emoji。
- * nativeImage 不支持 SVG data URL（Chromium 图像解码器不处理 SVG），
- * 所以用离屏窗口渲染 emoji 文本（系统 Apple Color Emoji 字体）再 capturePage 成 PNG，
- * 并按实际像素算 scaleFactor，保证 Retina 清晰；失败退回柱状 template 图标。
- */
-async function makeTrayIcon() {
-  try {
-    const w = new BrowserWindow({
-      show: false,
-      width: 44,
-      height: 44,
-      frame: false,
-      transparent: true,
-      backgroundColor: "#00000000",
-      webPreferences: { offscreen: true, sandbox: true },
-    });
-    await w.loadURL(
-      "data:text/html," +
-        encodeURIComponent(
-          "<!doctype html><meta charset=\"utf-8\">" +
-            "<body style=\"margin:0;width:44px;height:44px;display:flex;align-items:center;justify-content:center;" +
-            "font-size:38px;line-height:1;background:transparent;" +
-            "font-family:'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif\">🔮</body>"
-        )
-    );
-    try {
-      await w.webContents.executeJavaScript("document.fonts ? document.fonts.ready.then(function () { return true; }) : true");
-    } catch {}
-    const img = await w.webContents.capturePage();
-    w.destroy();
-    if (!img.isEmpty()) {
-      const size = img.getSize();
-      const scale = size.width > 0 ? size.width / 22 : 2; // 22pt 显示尺寸
-      return nativeImage.createFromBuffer(img.toPNG(), { scaleFactor: scale });
-    }
-  } catch (e) {
-    log("emoji 图标渲染失败，退回柱状图:", String(e));
-  }
-  const fb = nativeImage.createFromBuffer(makeIconPng(18));
-  fb.setTemplateImage(true);
-  return fb;
+/** 菜单栏图标：🔮 水晶球线稿（黑白 template，macOS 深浅色菜单栏自适应）。 */
+function makeTrayIcon() {
+  const img = nativeImage.createFromBuffer(makeCrystalPng(18));
+  img.setTemplateImage(true);
+  return img;
 }
 
 async function start() {
@@ -135,11 +98,11 @@ async function setupTrayMode(url) {
     { label: "退出", click: () => app.quit() },
   ]);
 
-  tray = new Tray(await makeTrayIcon());
+  tray = new Tray(makeTrayIcon());
   tray.setToolTip("GPU 监控");
   tray.on("click", togglePopover); // macOS 上设置 context menu 会吞掉左键 click，故右键单独弹出
   tray.on("right-click", () => {
-    hideAll(); // 先收起面板，避免 pop-up-menu 层级的面板盖住原生右键菜单
+    // 不收起面板：面板层级降到 torn-off-menu（低于原生菜单），右键菜单会浮在面板上方
     menu.popup();
   });
 
@@ -157,7 +120,7 @@ async function setupTrayMode(url) {
     webPreferences: baseWebPreferences(),
   });
   win.loadURL(url);
-  win.setAlwaysOnTop(true, "pop-up-menu");
+  win.setAlwaysOnTop(true, "torn-off-menu"); // 高于普通窗口/拦截层，低于原生右键菜单
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.on("blur", hideAll); // 保险：面板若拿到焦点再失去也收起
   // 关闭（Cmd+W / 退出手势）→ 隐藏而非退出
@@ -205,7 +168,7 @@ function showShields() {
       // ESM preload 需要 sandbox: false（仅本地 data: 页面，无远程内容）
       webPreferences: { ...baseWebPreferences(), preload, sandbox: false },
     });
-    s.setAlwaysOnTop(true, "status");
+    s.setAlwaysOnTop(true, "floating"); // 高于普通应用窗口、低于面板
     s.loadURL("data:text/html,<body style='margin:0;background:transparent'></body>");
     s.on("closed", () => {
       shields = shields.filter((w) => w !== s);

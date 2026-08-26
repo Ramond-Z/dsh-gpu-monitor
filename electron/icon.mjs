@@ -1,6 +1,6 @@
-// dsh-gpu-monitor: 运行时生成图标（PNG）。
-// 无二进制资源依赖：用 node:zlib 直接编码 PNG。macOS template 图标 = 黑色 + alpha，
-// 菜单栏自动适配深浅色。图形：三根活动柱状条（GPU 活动度），简洁易辨识。
+// dsh-gpu-monitor: 运行时生成菜单栏/应用图标（PNG）。
+// 无二进制资源依赖：用 node:zlib 直接编码 PNG。
+// 图形：🔮 水晶球线稿（黑白，macOS template 风格——黑色 + alpha，菜单栏深浅色自适应）。
 import { deflateSync } from "node:zlib";
 
 let crcTable = null;
@@ -27,23 +27,13 @@ function chunk(type, data) {
   return Buffer.concat([len, typeBuf, data, crcBuf]);
 }
 
-/** 标准圆角矩形包含测试。 */
-function inRounded(x, y, x0, y0, x1, y1, r) {
-  if (x < x0 || x > x1 || y < y0 || y > y1) return false;
-  const nx = Math.max(x0 + r, Math.min(x, x1 - r));
-  const ny = Math.max(y0 + r, Math.min(y, y1 - r));
-  const dx = x - nx;
-  const dy = y - ny;
-  return dx * dx + dy * dy <= r * r;
-}
-
 /**
- * 生成"三根活动柱"样式的 RGBA PNG（黑色 + alpha，template）。
- * 用途：emoji 渲染失败时的兜底菜单栏图标；build/icon.png（打包应用图标）。
- * @param {number} size 边长（默认 18，菜单栏推荐 16–22；打包图标用 1024）
+ * 生成 🔮 水晶球线稿 RGBA PNG（黑色 + alpha，template）。
+ * 元素：球体轮廓（约 2px 线宽，左上留高光缺口）、底座（托盘线框）、两个星点（+）。
+ * @param {number} size 边长（默认 18；打包应用图标用 1024）
  * @returns {Buffer}
  */
-export function makeIconPng(size = 18) {
+export function makeCrystalPng(size = 18) {
   const px = Buffer.alloc(size * size * 4);
   const set = (x, y, a) => {
     if (x < 0 || y < 0 || x >= size || y >= size) return;
@@ -54,25 +44,38 @@ export function makeIconPng(size = 18) {
     px[i + 3] = a;
   };
 
-  // 三根柱：等宽、圆角顶，底部对齐；高度递增（左矮右高）
-  const barW = Math.max(2, Math.round(size * 0.18)); // ~3px @18 / ~184px @1024
-  const gap = Math.max(1, Math.round(size * 0.12)); // ~2px @18
-  const bottom = size - Math.round(size * 0.16); // 底部内缩
-  const total = barW * 3 + gap * 2;
-  const start = Math.round((size - total) / 2);
-  const heights = [
-    Math.round(size * 0.24),
-    Math.round(size * 0.42),
-    Math.round(size * 0.6),
-  ];
-  for (let b = 0; b < 3; b++) {
-    const x0 = start + b * (barW + gap);
-    const x1 = x0 + barW - 1;
-    const y0 = bottom - heights[b] + 1;
-    for (let y = y0; y <= bottom; y++) {
-      for (let x = x0; x <= x1; x++) {
-        if (inRounded(x, y, x0, y0, x1, bottom, Math.max(1, Math.round(size * 0.06)))) set(x, y, 255);
-      }
+  const cx = size * 0.5;
+  const cy = size * 0.38;
+  const r = size * 0.24;
+  const stroke = Math.max(1, Math.round(size * 0.09)); // ~2px @18 / ~92px @1024
+  const dist = (x, y) => Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+  const onCircle = (x, y) => Math.abs(dist(x, y) - r) <= stroke / 2;
+
+  // 底座：2px 线框托盘（顶横线 + 底横线 + 两侧竖线）
+  const L = (v) => Math.round(v);
+  const baseTop = L(size * 0.70);
+  const baseBottom = L(size * 0.82) + 1;
+  const bx0 = L(cx - size * 0.20);
+  const bx1 = L(cx + size * 0.20);
+  const onBase = (x, y) => {
+    const onTop = (y === baseTop || y === baseTop + 1) && x >= bx0 && x <= bx1;
+    const onBottom = (y === baseBottom || y === baseBottom + 1) && x >= bx0 && x <= bx1;
+    const onSide = (x === bx0 || x === bx0 + 1 || x === bx1 || x === bx1 + 1) && y >= baseTop && y <= baseBottom + 1;
+    return onTop || onBottom || onSide;
+  };
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      if (!onCircle(x, y)) continue;
+      // 左上 45° 高光缺口
+      const ang = Math.atan2(y - cy, x - cx);
+      if (ang < -2.2 && ang > -2.8) continue;
+      set(x, y, 255);
+    }
+  }
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      if (onBase(x, y)) set(x, y, 255);
     }
   }
 
