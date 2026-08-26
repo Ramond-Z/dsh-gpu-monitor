@@ -19,6 +19,13 @@ const INCLUDE_LOCAL =
     ? process.env.GPU_MONITOR_INCLUDE_LOCAL !== "0"
     : process.platform !== "darwin";
 
+// 菜单栏常驻：模块加载时（app ready 之前）就设置 accessory 策略，避免启动瞬间
+// Dock 弹出图标再消失的闪烁（此前 dock.hide 在引擎启动后才调用，有 1~3s 窗口）
+if (process.platform === "darwin" && UI_MODE !== "window") {
+  try { app.setActivationPolicy("accessory"); } catch {}
+  try { app.dock?.hide(); } catch {}
+}
+
 let engine = null;
 let server = null;
 let win = null;
@@ -90,7 +97,7 @@ function openWindowMode(url) {
 
 /** 菜单栏常驻模式：Dock 隐藏，点击菜单栏图标弹出监控面板。 */
 async function setupTrayMode(url) {
-  app.dock?.hide();
+  // Dock 隐藏/accessory 策略已在模块加载时设置（避免启动闪烁）
 
   const menu = Menu.buildFromTemplate([
     { label: "显示 / 隐藏监控", click: togglePopover },
