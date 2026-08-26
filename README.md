@@ -13,6 +13,22 @@ DeepSeek Harness 插件：利用 `nvidia-smi` 实时监控 **多台机器** 的 
 
 手机/电脑浏览器均可用，主题跟随系统深浅色。
 
+## 代码结构
+
+DSH 插件与 MacBook 独立程序共享同一套核心，宿主/传输层只是薄壳：
+
+```
+lib/query.mjs     底层：nvidia-smi/ps 查询、CSV 解析、目标参数（宿主与 sidecar 共用）
+lib/sshconfig.mjs 底层：~/.ssh/config 解析（Include 展开、Host * 默认、first-wins）
+lib/orderstore.mjs 分组顺序持久化（{o, t} 文件存取，时间戳防旧覆盖）
+lib/engine.mjs    共享监控引擎：ssh config 探测、周期并行查询、顺序调和、
+                  状态快照与订阅（可注入 query 便于测试）
+lib/index.js      DSH 宿主插件（薄壳：启动引擎 + 注册 /gpu/status 路由）
+lib/sidecar.mjs   独立进程（薄壳：启动引擎 + HTTP 路由/JSON 桥/独立网页 UI）
+lib/client.js     浏览器 UI（DSH 侧边栏与独立页面共用同一份，零重复）
+lib/webui.mjs     独立页面资源（index.html + DSH shim）
+```
+
 ## 架构
 
 ```

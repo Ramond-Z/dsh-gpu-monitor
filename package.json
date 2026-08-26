@@ -8,6 +8,8 @@
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
     "./sidecar": "./lib/sidecar.mjs",
+    "./engine": "./lib/engine.mjs",
+    "./orderstore": "./lib/orderstore.mjs",
     "./sshconfig": "./lib/sshconfig.mjs",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
