@@ -1,13 +1,16 @@
 // dsh-gpu-monitor: Electron 原生应用入口（自包含，无需浏览器）。
 // 复用共享监控引擎 + HTTP 传输层：引擎在应用进程内运行，窗口直接加载本地 UI。
 // 运行：npm run app（开发） / npm run dist（打包 .app/.dmg）。
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, nativeTheme } from "electron";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createMonitorEngine } from "../lib/engine.mjs";
 import { createMonitorServer } from "../lib/server.mjs";
 
 const log = (...a) => console.log(new Date().toISOString(), "[gpu-monitor]", ...a);
+
+// 监控面板固定深色（与页面 data-gpu-theme=dark 一致），不受系统浅色模式影响
+nativeTheme.themeSource = "dark";
 
 const INCLUDE_LOCAL =
   process.env.GPU_MONITOR_INCLUDE_LOCAL !== undefined
