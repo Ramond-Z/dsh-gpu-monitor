@@ -73,6 +73,11 @@ async function start() {
     openWindowMode(url);
   } else {
     await setupTrayMode(url);
+    // 启动后自动弹出一次监控面板：菜单栏常驻应用无 Dock 图标、无窗口，
+    // 不弹面板的话用户会以为"启动没反应"
+    setTimeout(() => {
+      try { togglePopover(); } catch {}
+    }, 600);
   }
   log(`已启动（${UI_MODE} 模式）: ${url}`);
 }

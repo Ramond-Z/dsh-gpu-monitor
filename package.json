@@ -38,6 +38,9 @@
       "cordis.patch.yml",
       "package.json"
     ],
+    "extraMetadata": {
+      "main": "electron/main.mjs"
+    },
     "directories": {
       "output": "dist"
     },
