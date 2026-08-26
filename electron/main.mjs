@@ -1,7 +1,7 @@
 // dsh-gpu-monitor: Electron 原生应用入口。
 // 默认 **菜单栏常驻**（Dock 图标隐藏，点菜单栏图标弹出监控面板）；GPU_MONITOR_UI_MODE=window 时为独立窗口。
 // 复用共享监控引擎 + HTTP 传输层：引擎在应用进程内运行，面板/窗口加载本地 UI。
-import { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, screen } from "electron";
+import { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, screen, ipcMain } from "electron";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createMonitorEngine } from "../lib/engine.mjs";
@@ -139,8 +139,10 @@ function hideAll() {
 /**
  * 显示点击拦截层：透明全屏窗口（'status' 层级，高于普通应用、低于面板），
  * 点面板外任意处（含其它应用窗口/桌面）都会命中拦截层 → 自动收起面板。
+ * 点击检测走 preload 的 mousedown → IPC（before-input-event 只对键盘事件生效，鼠标无效）。
  */
 function showShields() {
+  const preload = new URL("./shield-preload.mjs", import.meta.url).pathname;
   for (const disp of screen.getAllDisplays()) {
     const wa = disp.workArea;
     const s = new BrowserWindow({
@@ -159,17 +161,11 @@ function showShields() {
       skipTaskbar: true,
       hasShadow: false,
       focusable: true,
-      webPreferences: baseWebPreferences(),
+      // ESM preload 需要 sandbox: false（仅本地 data: 页面，无远程内容）
+      webPreferences: { ...baseWebPreferences(), preload, sandbox: false },
     });
     s.setAlwaysOnTop(true, "status");
     s.loadURL("data:text/html,<body style='margin:0;background:transparent'></body>");
-    // 命中拦截层 → 收起（before-input-event 捕获鼠标按下，无需 IPC）
-    s.webContents.on("before-input-event", (event, input) => {
-      if (input.type === "mouseDown") {
-        event.preventDefault();
-        hideAll();
-      }
-    });
     s.on("closed", () => {
       shields = shields.filter((w) => w !== s);
     });
@@ -184,17 +180,19 @@ function togglePopover() {
     hideAll();
     return;
   }
-  // 定位到菜单栏图标下方居中
+  // 弹出定位：面板左边缘与菜单栏图标左边缘对齐（macOS 常见 popover 风格）；超出屏幕时夹紧
   const tb = tray.getBounds();
   const wb = win.getBounds();
   const wa = screen.getDisplayMatching(tb).workArea;
-  let x = Math.round(tb.x + tb.width / 2 - wb.width / 2);
-  x = Math.max(wa.x + 4, Math.min(x, wa.x + wa.width - wb.width - 4));
+  const x = Math.max(wa.x + 4, Math.min(tb.x, wa.x + wa.width - wb.width - 4));
   const y = Math.round(tb.y + tb.height + 6);
   win.setPosition(x, y, false);
   win.showInactive(); // 不抢焦点
   showShields(); // 拦截面板外的点击
 }
+
+// 拦截层点击 → 收起
+ipcMain.on("gpu-shield-click", hideAll);
 
 app.whenReady().then(start).catch((e) => {
   log("启动失败:", String(e));
