@@ -1,13 +1,14 @@
 {
   "name": "dsh-gpu-monitor",
   "version": "0.1.0",
-  "description": "DeepSeek Harness 插件 + 独立程序：nvidia-smi GPU 用量实时监控（多机/SSH），侧边栏方块图或独立网页，悬停查看每卡计算进程；npm run macbook 可在 MacBook 上独立运行",
+  "description": "GPU 用量实时监控（多机/SSH）：DeepSeek Harness 侧边栏插件 + 独立程序。npm run macbook 网页模式或 npm run app 原生应用（Electron，MacBook 自包含，无需浏览器）",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
     "./sidecar": "./lib/sidecar.mjs",
+    "./server": "./lib/server.mjs",
     "./engine": "./lib/engine.mjs",
     "./orderstore": "./lib/orderstore.mjs",
     "./sshconfig": "./lib/sshconfig.mjs",
@@ -16,13 +17,36 @@
   },
   "files": [
     "lib",
+    "electron",
     "cordis.patch.yml"
   ],
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",
     "sidecar": "node lib/sidecar.mjs",
     "macbook": "bash scripts/macbook.sh",
-    "start": "node lib/sidecar.mjs"
+    "start": "node lib/sidecar.mjs",
+    "app": "electron electron/main.mjs",
+    "dist": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.ramondz.gpu-monitor",
+    "productName": "GPU Monitor",
+    "files": [
+      "lib/**",
+      "electron/**",
+      "cordis.patch.yml",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools"
+    }
   },
   "dsh": {
     "bundle": {
@@ -36,6 +60,10 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1"
   },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
   "engines": {
     "node": ">=22"
   },
@@ -46,7 +74,9 @@
     "plugin",
     "gpu",
     "nvidia-smi",
-    "monitor"
+    "monitor",
+    "macbook",
+    "electron"
   ],
   "repository": {
     "type": "git",

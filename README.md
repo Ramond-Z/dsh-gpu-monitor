@@ -23,10 +23,12 @@ lib/sshconfig.mjs 底层：~/.ssh/config 解析（Include 展开、Host * 默认
 lib/orderstore.mjs 分组顺序持久化（{o, t} 文件存取，时间戳防旧覆盖）
 lib/engine.mjs    共享监控引擎：ssh config 探测、周期并行查询、顺序调和、
                   状态快照与订阅（可注入 query 便于测试）
+lib/server.mjs    共享 HTTP 传输层：状态/顺序/独立网页 UI 路由（CLI 与 Electron 共用）
 lib/index.js      DSH 宿主插件（薄壳：启动引擎 + 注册 /gpu/status 路由）
-lib/sidecar.mjs   独立进程（薄壳：启动引擎 + HTTP 路由/JSON 桥/独立网页 UI）
-lib/client.js     浏览器 UI（DSH 侧边栏与独立页面共用同一份，零重复）
-lib/webui.mjs     独立页面资源（index.html + DSH shim）
+lib/sidecar.mjs   独立进程 CLI（薄壳：引擎 + 传输层 + DSH 同源 JSON 桥）
+electron/main.mjs Electron 原生应用入口（自包含窗口，无需浏览器）
+lib/client.js     浏览器 UI（DSH 侧边栏与独立页面/原生应用共用同一份，零重复）
+lib/webui.mjs     独立页面资源（index.html + 顶栏状态条 + DSH shim）
 ```
 
 ## 架构
@@ -126,20 +128,37 @@ setsid nohup node lib/sidecar.mjs >> /tmp/dsh-gpu-monitor-sidecar.log 2>&1 < /de
 
 ## 在 MacBook 上独立运行
 
-无需 DSH、无需本机 `nvidia-smi`（macOS 也没有）：把仓库拷到 MacBook，装好 Node ≥ 22，运行：
+无需 DSH、无需本机 `nvidia-smi`（macOS 也没有）：把仓库拷到 MacBook，装好 Node ≥ 22，**两种运行方式**：
+
+### 方式 A：原生应用（推荐，自包含窗口，无需浏览器）
 
 ```bash
-npm run macbook    # 等价: bash scripts/macbook.sh
+npm install            # 首次：拉取 electron（仅开发依赖，不影响 dsh 插件安装）
+npm run app            # 弹出原生窗口（引擎在应用进程内运行，随机本地端口，无外部依赖）
 ```
 
-浏览器自动打开 `http://127.0.0.1:3499` —— 解析 MacBook 的 `~/.ssh/config`，探测其中可用的 GPU server 并实时监控（方块图、悬停看进程、拖动排序、高度调整全部可用）。Ctrl-C 退出。
+可选：打包成可双击的 `.app`/`.dmg`：
 
-- 默认**不查询本机**（macOS 无 nvidia-smi，sidecar 按平台自动关闭本机查询）；`GPU_MONITOR_INCLUDE_LOCAL=1` 可强制开启
+```bash
+npm run dist           # electron-builder 打包 → dist/GPU Monitor-*.dmg
+```
+
+### 方式 B：网页模式
+
+```bash
+npm run macbook        # 等价: bash scripts/macbook.sh
+```
+
+浏览器自动打开 `http://127.0.0.1:3499`。Ctrl-C 退出。
+
+两种方式都解析 MacBook 的 `~/.ssh/config`，探测其中可用的 GPU server 并实时监控（方块图、悬停看进程、拖动排序、高度调整、顶栏状态条全部可用）。
+
+- 默认**不查询本机**（macOS 无 nvidia-smi，按平台自动关闭）；`GPU_MONITOR_INCLUDE_LOCAL=1` 可强制开启
 - 需 MacBook 到各 GPU server 已配 SSH 免密登录（与 Linux 上一致）
 - 分组顺序同样持久化在 `~/.dsh/gpu-monitor-order.json`，跨浏览器/设备共享
 - 任何有 node + ssh 的电脑同样适用：`node lib/sidecar.mjs` 后访问该端口
-- 远程访问改 `GPU_MONITOR_HOST=0.0.0.0`，浏览器访问 `http://<机器IP>:3499`；排序回同步走同源 POST，无需额外配置
-- 技术说明：独立页面通过 `lib/webui.mjs` 里一个 ~60 行的 shim（模拟 `__ModuleLoader__`/React/slots）让 `lib/client.js` **原样**运行，UI 零重复维护；sidecar 直接提供 `/`、`/dsh-shim.js`、`/plugins/dsh-gpu-monitor/client.js`、`/gpu-status.json`、`/gpu/status`、`POST /order`
+- 远程访问（网页模式）改 `GPU_MONITOR_HOST=0.0.0.0`，浏览器访问 `http://<机器IP>:3499`；排序回同步走同源 POST，无需额外配置
+- 技术说明：独立页面/原生应用通过 `lib/webui.mjs` 里一个 ~60 行的 shim（模拟 `__ModuleLoader__`/React/slots）让 `lib/client.js` **原样**运行，UI 零重复维护；HTTP 路由（`/`、`/dsh-shim.js`、`/plugins/dsh-gpu-monitor/client.js`、`/gpu-status.json`、`/gpu/status`、`POST /order`）由 `lib/server.mjs` 提供，CLI 与 Electron 共用
 
 ## 开发
 
