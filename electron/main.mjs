@@ -45,10 +45,11 @@ async function start() {
   });
 
   const url = `http://127.0.0.1:${server.port}`;
+  // 默认宽度：8 卡按 4×2 两排刚好放下（方块 46px×4 + 间距 + 内边距/卡片边距 ≈ 226px，留 ~26px 余量）
   win = new BrowserWindow({
-    width: 960,
+    width: 252,
     height: 760,
-    minWidth: 420,
+    minWidth: 240,
     minHeight: 320,
     title: "GPU 监控",
     backgroundColor: "#0f1116",

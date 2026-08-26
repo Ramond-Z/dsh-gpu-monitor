@@ -134,7 +134,8 @@ setsid nohup node lib/sidecar.mjs >> /tmp/dsh-gpu-monitor-sidecar.log 2>&1 < /de
 
 ```bash
 npm install            # 首次：拉取 electron（仅开发依赖，不影响 dsh 插件安装）
-npm run app            # 弹出原生窗口（引擎在应用进程内运行，随机本地端口，无外部依赖）
+npm run app            # 弹出原生窗口：默认宽度按 8 卡 4×2 两排刚好放下（252px），
+                       # 监控区纵向占满整个窗口（无高度把手）；可拖动调整窗口大小
 ```
 
 > **安装很慢？** 仓库自带 `.npmrc`（electron 二进制走 npmmirror 镜像）。若已卡住，先 Ctrl-C，
