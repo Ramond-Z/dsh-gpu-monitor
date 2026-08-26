@@ -3,7 +3,8 @@
 // 用法：electron scripts/rasterize-icon.mjs
 import { app, BrowserWindow } from "electron";
 import { fileURLToPath } from "node:url";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { iconSvgMarkup } from "../electron/icon.mjs";
 
 const SIZE = 1024;
@@ -35,6 +36,7 @@ app.whenReady().then(async () => {
     w.destroy();
     if (img.isEmpty()) throw new Error("capturePage 返回空图");
     const out = fileURLToPath(new URL("../build/icon.png", import.meta.url));
+    mkdirSync(dirname(out), { recursive: true }); // build/ 可能不存在（git 不跟踪空目录）
     writeFileSync(out, img.toPNG());
     console.log("build/icon.png 已生成:", img.getSize(), img.toPNG().length, "bytes");
     app.exit(0);
