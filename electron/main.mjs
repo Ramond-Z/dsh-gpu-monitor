@@ -41,6 +41,11 @@ function makeTrayIcon() {
 }
 
 async function start() {
+  // ready 后再强调一次 accessory 策略（顶层调用在极端情况下可能先于 app 初始化完成）
+  if (process.platform === "darwin" && UI_MODE !== "window") {
+    try { app.setActivationPolicy("accessory"); } catch {}
+    try { app.dock?.hide(); } catch {}
+  }
   engine = createMonitorEngine({
     intervalMs: Number(process.env.GPU_MONITOR_INTERVAL_MS || 3000),
     timeoutMs: Number(process.env.GPU_MONITOR_QUERY_TIMEOUT_MS || 8000),
@@ -130,7 +135,8 @@ async function setupTrayMode(url) {
   // 层级：modal-panel(8) —— 高于拦截层 floating(3)、低于原生右键菜单 pop-up-menu(101)。
   // 注意 torn-off-menu 与 floating 同为 NSWindowLevel 3，会导致后创建的透明拦截层盖住面板（点击/滚轮失效）。
   win.setAlwaysOnTop(true, "modal-panel");
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // 不能调用 setVisibleOnAllWorkspaces(true)：它会内部触发 dock.show()，把 Dock 图标重新唤出
+  // （electron#25368），与 dock.hide() 打架导致启动时 Dock 图标闪现
   win.on("blur", hideAll); // 保险：面板若拿到焦点再失去也收起
   // 关闭（Cmd+W / 退出手势）→ 隐藏而非退出
   win.on("close", (e) => {

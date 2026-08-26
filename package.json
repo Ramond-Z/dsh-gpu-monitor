@@ -47,7 +47,10 @@
         "zip"
       ],
       "icon": "build/icon.png",
-      "category": "public.app-category.developer-tools"
+      "category": "public.app-category.developer-tools",
+      "extendInfo": {
+        "LSUIElement": true
+      }
     }
   },
   "dsh": {
