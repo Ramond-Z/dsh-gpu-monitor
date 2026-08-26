@@ -134,7 +134,7 @@ setsid nohup node lib/sidecar.mjs >> /tmp/dsh-gpu-monitor-sidecar.log 2>&1 < /de
 
 ```bash
 npm install            # 首次：拉取 electron（仅开发依赖，不影响 dsh 插件安装）
-npm run app            # 菜单栏常驻：Dock 图标隐藏，点菜单栏芯片图标弹出监控面板
+npm run app            # 菜单栏常驻：Dock 图标隐藏，点菜单栏 🔮 图标弹出监控面板
 ```
 
 - **左键菜单栏图标**：弹出监控面板（面板左边缘与图标左边缘对齐、跟随图标下方、不抢焦点；**点击面板外任意处自动收起**）

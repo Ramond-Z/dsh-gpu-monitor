@@ -38,6 +38,25 @@ function inRounded(x, y, x0, y0, x1, y1, r) {
 }
 
 /**
+ * 生成 🔮 emoji 的 SVG（经 data URL 交给 nativeImage 栅格化，彩色 emoji 不用 template）。
+ * @param {number} size 边长（默认 18，菜单栏推荐 16–22）
+ * @returns {string}
+ */
+export function makeEmojiSvg(size = 18) {
+  const fontSize = Math.round(size * 0.95);
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+    `<text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}px" ` +
+    `font-family="Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif">🔮</text></svg>`
+  );
+}
+
+/** 🔮 emoji 的 SVG data URL。 */
+export function makeEmojiDataUrl(size = 18) {
+  return "data:image/svg+xml;base64," + Buffer.from(makeEmojiSvg(size), "utf8").toString("base64");
+}
+
+/**
  * 生成"三根活动柱"样式的 RGBA PNG（黑色 + alpha，template）。
  * @param {number} size 边长（默认 18，菜单栏推荐 16–22；打包图标用 1024）
  * @returns {Buffer}

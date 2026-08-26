@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createMonitorEngine } from "../lib/engine.mjs";
 import { createMonitorServer } from "../lib/server.mjs";
-import { makeIconPng } from "./icon.mjs";
+import { makeEmojiDataUrl, makeIconPng } from "./icon.mjs";
 
 const log = (...a) => console.log(new Date().toISOString(), "[gpu-monitor]", ...a);
 
@@ -26,10 +26,13 @@ let tray = null;
 let shields = []; // 点击拦截层（透明全屏窗，用于"点面板外自动收起"）
 let quitting = false;
 
-function makeIcon(size = 18) {
-  const img = nativeImage.createFromBuffer(makeIconPng(size));
-  img.setTemplateImage(true); // macOS template：菜单栏深浅色自适应
-  return img;
+/** 菜单栏图标：🔮 emoji（彩色，经 SVG data URL 栅格化）；失败时退回柱状 template 图标。 */
+function makeTrayIcon() {
+  const img = nativeImage.createFromDataURL(makeEmojiDataUrl(18));
+  if (!img.isEmpty()) return img;
+  const fb = nativeImage.createFromBuffer(makeIconPng(18));
+  fb.setTemplateImage(true);
+  return fb;
 }
 
 async function start() {
@@ -97,7 +100,7 @@ function setupTrayMode(url) {
     { label: "退出", click: () => app.quit() },
   ]);
 
-  tray = new Tray(makeIcon());
+  tray = new Tray(makeTrayIcon());
   tray.setToolTip("GPU 监控");
   tray.on("click", togglePopover); // macOS 上设置 context menu 会吞掉左键 click，故右键单独弹出
   tray.on("right-click", () => menu.popup());
