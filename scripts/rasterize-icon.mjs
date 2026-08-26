@@ -2,6 +2,7 @@
 // 需在 electron 下运行（Chromium 栅格化 SVG）：npm run dist 的第一步。
 // 用法：electron scripts/rasterize-icon.mjs
 import { app, BrowserWindow } from "electron";
+import { fileURLToPath } from "node:url";
 import { writeFileSync } from "node:fs";
 import { iconSvgMarkup } from "../electron/icon.mjs";
 
@@ -33,7 +34,7 @@ app.whenReady().then(async () => {
     const img = await w.webContents.capturePage();
     w.destroy();
     if (img.isEmpty()) throw new Error("capturePage 返回空图");
-    const out = new URL("../build/icon.png", import.meta.url).pathname;
+    const out = fileURLToPath(new URL("../build/icon.png", import.meta.url));
     writeFileSync(out, img.toPNG());
     console.log("build/icon.png 已生成:", img.getSize(), img.toPNG().length, "bytes");
     app.exit(0);

@@ -2,6 +2,7 @@
 // 默认 **菜单栏常驻**（Dock 图标隐藏，点菜单栏图标弹出监控面板）；GPU_MONITOR_UI_MODE=window 时为独立窗口。
 // 复用共享监控引擎 + HTTP 传输层：引擎在应用进程内运行，面板/窗口加载本地 UI。
 import { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, screen, ipcMain } from "electron";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createMonitorEngine } from "../lib/engine.mjs";
@@ -205,7 +206,7 @@ function hideAll() {
  * 点击检测走 preload 的 mousedown → IPC（before-input-event 只对键盘事件生效，鼠标无效）。
  */
 function showShields() {
-  const preload = new URL("./shield-preload.mjs", import.meta.url).pathname;
+  const preload = fileURLToPath(new URL("./shield-preload.mjs", import.meta.url));
   for (const disp of screen.getAllDisplays()) {
     const wa = disp.workArea;
     const s = new BrowserWindow({
