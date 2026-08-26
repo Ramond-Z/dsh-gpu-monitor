@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createMonitorEngine } from "../lib/engine.mjs";
 import { createMonitorServer } from "../lib/server.mjs";
-import { makeCrystalPng } from "./icon.mjs";
+import { makeCrystalPng, iconSvgMarkup } from "./icon.mjs";
 
 const log = (...a) => console.log(new Date().toISOString(), "[gpu-monitor]", ...a);
 
@@ -33,11 +33,50 @@ let tray = null;
 let shields = []; // 点击拦截层（透明全屏窗，用于"点面板外自动收起"）
 let quitting = false;
 
-/** 菜单栏图标：🔮 水晶球线稿（黑白 template，macOS 深浅色菜单栏自适应）。 */
-function makeTrayIcon() {
-  const img = nativeImage.createFromBuffer(makeCrystalPng(18));
-  img.setTemplateImage(true);
-  return img;
+/** 把 SVG 栅格化成 PNG 的离屏渲染（nativeImage 不支持 SVG 数据 URL）。 */
+async function rasterizeSvg(size) {
+  const w = new BrowserWindow({
+    show: false,
+    width: size,
+    height: size,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    webPreferences: { offscreen: true, sandbox: true },
+  });
+  await w.loadURL(
+    "data:text/html," +
+      encodeURIComponent(
+        "<!doctype html><meta charset=\"utf-8\">" +
+          `<body style="margin:0;width:${size}px;height:${size}px;overflow:hidden">` +
+          iconSvgMarkup() +
+          "</body>"
+      )
+  );
+  // 等两帧，确保首帧已绘制
+  await w.webContents.executeJavaScript(
+    "new Promise(function (r) { requestAnimationFrame(function () { requestAnimationFrame(r); }); });"
+  );
+  const img = await w.webContents.capturePage();
+  w.destroy();
+  return img.isEmpty() ? null : img.toPNG();
+}
+
+/** 菜单栏图标：electron/icon.svg（freeicon.com 单色 GPU 图标）栅格化成 template PNG。 */
+async function makeTrayIcon() {
+  try {
+    const png = await rasterizeSvg(36); // 2x 渲染，按实际像素算 scaleFactor，Retina 清晰
+    if (png) {
+      const img = nativeImage.createFromBuffer(png, { scaleFactor: 2 });
+      img.setTemplateImage(true);
+      return img;
+    }
+  } catch (e) {
+    log("SVG 图标渲染失败，退回水晶球:", String(e));
+  }
+  const fb = nativeImage.createFromBuffer(makeCrystalPng(18));
+  fb.setTemplateImage(true);
+  return fb;
 }
 
 async function start() {
@@ -115,7 +154,7 @@ async function setupTrayMode(url) {
     { label: "退出", click: () => app.quit() },
   ]);
 
-  tray = new Tray(makeTrayIcon());
+  tray = new Tray(await makeTrayIcon());
   tray.setToolTip("GPU 监控");
   tray.on("click", togglePopover); // macOS 上设置 context menu 会吞掉左键 click，故右键单独弹出
   tray.on("right-click", () => {

@@ -1,8 +1,32 @@
-// dsh-gpu-monitor: 运行时生成菜单栏/应用图标（PNG）。
-// 无二进制资源依赖：用 node:zlib 直接编码 PNG。
-// 图形：🔮 水晶球线稿（黑白，macOS template 风格——黑色 + alpha，菜单栏深浅色自适应）。
+// dsh-gpu-monitor: 图标资源（electron/icon.svg，freeicon.com 单色 GPU 图标）。
+// nativeImage 不支持 SVG（Chromium 图像解码器不处理 SVG），所以由主进程用
+// 离屏窗口栅格化成 PNG（见 main.mjs 的 makeTrayIcon）；本模块只提供 SVG 处理。
+import { readFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 
+const svgRaw = readFileSync(new URL("./icon.svg", import.meta.url), "utf8");
+
+/**
+ * 取处理过的 SVG 标记：去掉 XML 声明与 XMP metadata，注入 viewBox 以便任意缩放。
+ * @returns {string}
+ */
+export function iconSvgMarkup() {
+  return svgRaw
+    .replace(/^\s*<\?xml[^?]*\?>\s*/, "")
+    .replace(/<\?xpacket[^?]*\?>/g, "")
+    .replace(/<metadata[\s\S]*?<\/metadata>/g, "")
+    .replace(/<svg([^>]*)>/, (m, attrs) => {
+      const noSize = attrs.replace(/\s(width|height)="[^"]*"/g, "");
+      return `<svg${noSize} viewBox="0 0 1024 1024">`;
+    });
+}
+
+/** SVG 的 data URL（可直接给 <img src>）。 */
+export function iconSvgDataUrl() {
+  return "data:image/svg+xml;base64," + Buffer.from(iconSvgMarkup(), "utf8").toString("base64");
+}
+
+// —— 兜底：原水晶球 PNG 生成器（离屏渲染失败时使用） ——
 let crcTable = null;
 function crc32(buf) {
   if (!crcTable) {
@@ -28,9 +52,8 @@ function chunk(type, data) {
 }
 
 /**
- * 生成 🔮 水晶球 RGBA PNG（黑色 + alpha，template）。
- * 实心剪影风格（贴合 macOS 菜单栏常规图标）：实心球体 + 左上高光月牙镂空 + 实心底座。
- * @param {number} size 边长（默认 18；打包应用图标用 1024）
+ * 生成 🔮 水晶球 RGBA PNG（黑色 + alpha，template）——兜底图标。
+ * @param {number} size 边长（默认 18；打包图标用 1024）
  * @returns {Buffer}
  */
 export function makeCrystalPng(size = 18) {

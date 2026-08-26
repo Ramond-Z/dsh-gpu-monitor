@@ -27,7 +27,7 @@
     "start": "node lib/sidecar.mjs",
     "app": "electron electron/main.mjs",
     "app:window": "GPU_MONITOR_UI_MODE=window electron electron/main.mjs",
-    "dist": "electron-builder --mac"
+    "dist": "electron scripts/rasterize-icon.mjs && electron-builder --mac"
   },
   "build": {
     "appId": "com.ramondz.gpu-monitor",
