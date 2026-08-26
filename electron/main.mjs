@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createMonitorEngine } from "../lib/engine.mjs";
 import { createMonitorServer } from "../lib/server.mjs";
-import { makeEmojiDataUrl, makeIconPng } from "./icon.mjs";
+import { makeIconPng } from "./icon.mjs";
 
 const log = (...a) => console.log(new Date().toISOString(), "[gpu-monitor]", ...a);
 
@@ -26,10 +26,45 @@ let tray = null;
 let shields = []; // 点击拦截层（透明全屏窗，用于"点面板外自动收起"）
 let quitting = false;
 
-/** 菜单栏图标：🔮 emoji（彩色，经 SVG data URL 栅格化）；失败时退回柱状 template 图标。 */
-function makeTrayIcon() {
-  const img = nativeImage.createFromDataURL(makeEmojiDataUrl(18));
-  if (!img.isEmpty()) return img;
+/**
+ * 菜单栏图标：🔮 emoji。
+ * nativeImage 不支持 SVG data URL（Chromium 图像解码器不处理 SVG），
+ * 所以用离屏窗口渲染 emoji 文本（系统 Apple Color Emoji 字体）再 capturePage 成 PNG，
+ * 并按实际像素算 scaleFactor，保证 Retina 清晰；失败退回柱状 template 图标。
+ */
+async function makeTrayIcon() {
+  try {
+    const w = new BrowserWindow({
+      show: false,
+      width: 44,
+      height: 44,
+      frame: false,
+      transparent: true,
+      backgroundColor: "#00000000",
+      webPreferences: { offscreen: true, sandbox: true },
+    });
+    await w.loadURL(
+      "data:text/html," +
+        encodeURIComponent(
+          "<!doctype html><meta charset=\"utf-8\">" +
+            "<body style=\"margin:0;width:44px;height:44px;display:flex;align-items:center;justify-content:center;" +
+            "font-size:38px;line-height:1;background:transparent;" +
+            "font-family:'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif\">🔮</body>"
+        )
+    );
+    try {
+      await w.webContents.executeJavaScript("document.fonts ? document.fonts.ready.then(function () { return true; }) : true");
+    } catch {}
+    const img = await w.webContents.capturePage();
+    w.destroy();
+    if (!img.isEmpty()) {
+      const size = img.getSize();
+      const scale = size.width > 0 ? size.width / 22 : 2; // 22pt 显示尺寸
+      return nativeImage.createFromBuffer(img.toPNG(), { scaleFactor: scale });
+    }
+  } catch (e) {
+    log("emoji 图标渲染失败，退回柱状图:", String(e));
+  }
   const fb = nativeImage.createFromBuffer(makeIconPng(18));
   fb.setTemplateImage(true);
   return fb;
@@ -62,7 +97,7 @@ async function start() {
   if (UI_MODE === "window") {
     openWindowMode(url);
   } else {
-    setupTrayMode(url);
+    await setupTrayMode(url);
   }
   log(`已启动（${UI_MODE} 模式）: ${url}`);
 }
@@ -91,7 +126,7 @@ function openWindowMode(url) {
 }
 
 /** 菜单栏常驻模式：Dock 隐藏，点击菜单栏图标弹出监控面板。 */
-function setupTrayMode(url) {
+async function setupTrayMode(url) {
   app.dock?.hide();
 
   const menu = Menu.buildFromTemplate([
@@ -100,10 +135,13 @@ function setupTrayMode(url) {
     { label: "退出", click: () => app.quit() },
   ]);
 
-  tray = new Tray(makeTrayIcon());
+  tray = new Tray(await makeTrayIcon());
   tray.setToolTip("GPU 监控");
   tray.on("click", togglePopover); // macOS 上设置 context menu 会吞掉左键 click，故右键单独弹出
-  tray.on("right-click", () => menu.popup());
+  tray.on("right-click", () => {
+    hideAll(); // 先收起面板，避免 pop-up-menu 层级的面板盖住原生右键菜单
+    menu.popup();
+  });
 
   win = new BrowserWindow({
     width: 252,
