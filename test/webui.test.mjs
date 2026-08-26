@@ -18,6 +18,10 @@ test("standalone page follows system theme (not hardcoded dark)", () => {
   // 浅色样式走纯媒体查询，随系统切换
   assert.ok(INDEX_HTML.includes("@media (prefers-color-scheme: light)"));
   assert.ok(INDEX_HTML.includes("color-scheme: light dark"));
+  // 浅色覆盖必须出现在基础（深色）规则之后：同特异性下后写的规则胜出，
+  // 否则浅色模式下 meta/refresh 仍会显示深色的浅灰/白色文字
+  const lightIdx = INDEX_HTML.indexOf("@media (prefers-color-scheme: light)");
+  assert.ok(lightIdx > INDEX_HTML.indexOf(".app-bar .refresh:hover"), "浅色媒体查询应位于基础深色规则之后");
 });
 
 test("shim script is syntactically valid and defines the expected globals", () => {
