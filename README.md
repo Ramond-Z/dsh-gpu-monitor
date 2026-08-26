@@ -137,6 +137,11 @@ npm install            # 首次：拉取 electron（仅开发依赖，不影响 
 npm run app            # 弹出原生窗口（引擎在应用进程内运行，随机本地端口，无外部依赖）
 ```
 
+> **安装很慢？** 仓库自带 `.npmrc`（electron 二进制走 npmmirror 镜像）。若已卡住，先 Ctrl-C，
+> 然后 `npm install --no-audit --no-fund` 重试；若只是二进制没下完，可单独补：
+> `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node node_modules/electron/install.js`。
+> 海外用户可删除 `.npmrc` 或改用官方源。
+
 可选：打包成可双击的 `.app`/`.dmg`：
 
 ```bash
