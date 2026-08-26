@@ -9,7 +9,7 @@ DeepSeek Harness 插件：利用 `nvidia-smi` 实时监控 **多台机器** 的 
   - 方块上写实时功率（W）
 - **鼠标悬停方块 ~0.5s** → 显示该卡上的**计算进程**：属主 / PID / 占用显存 / 命令行（触摸设备点按查看）
 - 面板**顶部把手可上下拖动**调整面板高度（64px ~ 90vh，记忆在 localStorage；双击把手恢复默认 42vh 上限）
-- **拖动分组表头**可调整服务器上下顺序（⠿ 提示）。顺序**宿主侧持久化**（sidecar 写入 `~/.dsh/gpu-monitor-order.json`，带时间戳），跨浏览器/设备共享"上次退出时的顺序"；本浏览器同时缓存于 localStorage（`dsh-gpu-monitor:order`），sidecar 短暂离线时仍生效，恢复后自动回同步
+- **拖动分组表头**可调整服务器上下顺序（⠿ 提示）。顺序**宿主侧持久化**（宿主插件与 sidecar 共用 `~/.dsh/gpu-monitor-order.json`，带时间戳），跨浏览器/设备共享"上次退出时的顺序"；本浏览器同时缓存于 localStorage（`dsh-gpu-monitor:order`），sidecar 短暂离线时仍生效，恢复后自动回同步。调和规则保留**含探测不可达机器**在内的全部已保存顺序——机器瞬时掉线不会把它的排序位挤掉，恢复后仍原位
 
 手机/电脑浏览器均可用，主题跟随系统深浅色。
 
@@ -220,7 +220,7 @@ npm run macbook        # 等价: bash scripts/macbook.sh
 - 分组顺序同样持久化在 `~/.dsh/gpu-monitor-order.json`，跨浏览器/设备共享
 - 任何有 node + ssh 的电脑同样适用：`node lib/sidecar.mjs` 后访问该端口
 - 远程访问（网页模式）改 `GPU_MONITOR_HOST=0.0.0.0`，浏览器访问 `http://<机器IP>:3499`；排序回同步走同源 POST，无需额外配置
-- 技术说明：独立页面/原生应用通过 `lib/webui.mjs` 里一个 ~60 行的 shim（模拟 `__ModuleLoader__`/React/slots）让 `lib/client.js` **原样**运行，UI 零重复维护；HTTP 路由（`/`、`/dsh-shim.js`、`/plugins/dsh-gpu-monitor/client.js`、`/gpu-status.json`、`/gpu/status`、`POST /order`）由 `lib/server.mjs` 提供，CLI 与 Electron 共用
+- 技术说明：独立页面/原生应用通过 `lib/webui.mjs` 里一个 ~60 行的 shim（模拟 `__ModuleLoader__`/React/slots）让 `lib/client.js` **原样**运行，UI 零重复维护；HTTP 路由（`/`、`/dsh-shim.js`、`/plugins/dsh-gpu-monitor/client.js`、`/gpu-status.json`、`/gpu/status`、`GET/POST /settings`、`POST /order`）由 `lib/server.mjs` 提供，CLI 与 Electron 共用；DSH 宿主插件注册同源 `/gpu/status`、`/settings`、`/order`（处理器共享，顺序与设置与 sidecar 共用同一持久化文件）
 
 ## 开发
 

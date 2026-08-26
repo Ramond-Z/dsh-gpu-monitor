@@ -287,3 +287,66 @@ test("engine serverCandidates reports reachability from probes", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("engine stored order keeps ids of unreachable-but-configured machines (no truncation)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-engine-"));
+  try {
+    const cfg = join(dir, "sshconfig");
+    writeFileSync(cfg, "Host g1\n  HostName 10.0.0.1\n  User u\nHost g2\n  HostName 10.0.0.2\n  User u\n");
+    // g1 可达、g2 不可达：存储顺序 [g2, g1] 不得被截断成 [g1]
+    const engine = createMonitorEngine({
+      useSshConfig: true,
+      sshConfigPath: cfg,
+      includeLocal: false,
+      orderFile: join(dir, "order.json"),
+      probe: async (t) => (t.alias === "g1" ? { ok: true, error: "" } : { ok: false, error: "拒绝" }),
+      query: async ({ servers }) => servers.map((t) => ({ host: t.alias, label: t.alias, ok: true, gpus: [] })),
+    });
+    await engine.discover();
+    await engine.tick();
+    const next = engine.setOrder(["g2", "g1"], 1000);
+    assert.deepEqual(next.o, ["g2", "g1"], "不可达机器仍在 ssh config 中，顺序必须保留");
+    // GET /status 的 order 同样完整（此前会返回被截断的 [g1]）
+    assert.deepEqual(engine.getState().order.o, ["g2", "g1"]);
+    // 重启后仍完整（文件 + 调和都保留）
+    const reloaded = createMonitorEngine({
+      useSshConfig: true,
+      sshConfigPath: cfg,
+      includeLocal: false,
+      orderFile: join(dir, "order.json"),
+      probe: async (t) => (t.alias === "g1" ? { ok: true, error: "" } : { ok: false, error: "拒绝" }),
+      query: async ({ servers }) => servers.map((t) => ({ host: t.alias, label: t.alias, ok: true, gpus: [] })),
+    });
+    await reloaded.discover();
+    await reloaded.tick();
+    assert.deepEqual(reloaded.getState().order.o, ["g2", "g1"], "重启后不可达机器的排序仍在原位");
+    reloaded.stop();
+    engine.stop();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("engine serveOrder returns stored order verbatim before first discovery", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-engine-"));
+  try {
+    const cfg = join(dir, "sshconfig");
+    writeFileSync(cfg, "Host g1\n  HostName 10.0.0.1\n  User u\nHost g2\n  HostName 10.0.0.2\n  User u\n");
+    // 先在文件里写好顺序，再构造引擎：未探测时 serveOrder 不得调和（避免空截断）
+    writeFileSync(join(dir, "order.json"), JSON.stringify({ o: ["g2", "g1"], t: 500 }));
+    let probeCalled = false;
+    const engine = createMonitorEngine({
+      useSshConfig: true,
+      sshConfigPath: cfg,
+      includeLocal: false,
+      orderFile: join(dir, "order.json"),
+      probe: async () => { probeCalled = true; return { ok: false, error: "拒绝" }; },
+      query: async () => [],
+    });
+    assert.deepEqual(engine.getState().order, { o: ["g2", "g1"], t: 500 }, "探测未完成前返回存储顺序原样");
+    assert.equal(probeCalled, false);
+    engine.stop();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
