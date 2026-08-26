@@ -120,7 +120,9 @@ async function setupTrayMode(url) {
     webPreferences: baseWebPreferences(),
   });
   win.loadURL(url);
-  win.setAlwaysOnTop(true, "torn-off-menu"); // 高于普通窗口/拦截层，低于原生右键菜单
+  // 层级：modal-panel(8) —— 高于拦截层 floating(3)、低于原生右键菜单 pop-up-menu(101)。
+  // 注意 torn-off-menu 与 floating 同为 NSWindowLevel 3，会导致后创建的透明拦截层盖住面板（点击/滚轮失效）。
+  win.setAlwaysOnTop(true, "modal-panel");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.on("blur", hideAll); // 保险：面板若拿到焦点再失去也收起
   // 关闭（Cmd+W / 退出手势）→ 隐藏而非退出
