@@ -23,10 +23,11 @@ let engine = null;
 let server = null;
 let win = null;
 let tray = null;
+let shields = []; // 点击拦截层（透明全屏窗，用于"点面板外自动收起"）
 let quitting = false;
 
-function makeIcon() {
-  const img = nativeImage.createFromBuffer(makeIconPng(18));
+function makeIcon(size = 18) {
+  const img = nativeImage.createFromBuffer(makeIconPng(size));
   img.setTemplateImage(true); // macOS template：菜单栏深浅色自适应
   return img;
 }
@@ -117,22 +118,70 @@ function setupTrayMode(url) {
   win.loadURL(url);
   win.setAlwaysOnTop(true, "pop-up-menu");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  // 点击面板外自动收起（标准 popover 行为）
-  win.on("blur", () => {
-    if (win && !win.isDestroyed()) win.hide();
-  });
+  win.on("blur", hideAll); // 保险：面板若拿到焦点再失去也收起
   // 关闭（Cmd+W / 退出手势）→ 隐藏而非退出
   win.on("close", (e) => {
     if (quitting) return;
     e.preventDefault();
-    win.hide();
+    hideAll();
   });
+}
+
+/** 收起面板 + 销毁点击拦截层。 */
+function hideAll() {
+  if (win && !win.isDestroyed()) win.hide();
+  for (const s of shields) {
+    try { s.destroy(); } catch {}
+  }
+  shields = [];
+}
+
+/**
+ * 显示点击拦截层：透明全屏窗口（'status' 层级，高于普通应用、低于面板），
+ * 点面板外任意处（含其它应用窗口/桌面）都会命中拦截层 → 自动收起面板。
+ */
+function showShields() {
+  for (const disp of screen.getAllDisplays()) {
+    const wa = disp.workArea;
+    const s = new BrowserWindow({
+      x: wa.x,
+      y: wa.y,
+      width: wa.width,
+      height: wa.height,
+      frame: false,
+      transparent: true,
+      show: false,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      hasShadow: false,
+      focusable: true,
+      webPreferences: baseWebPreferences(),
+    });
+    s.setAlwaysOnTop(true, "status");
+    s.loadURL("data:text/html,<body style='margin:0;background:transparent'></body>");
+    // 命中拦截层 → 收起（before-input-event 捕获鼠标按下，无需 IPC）
+    s.webContents.on("before-input-event", (event, input) => {
+      if (input.type === "mouseDown") {
+        event.preventDefault();
+        hideAll();
+      }
+    });
+    s.on("closed", () => {
+      shields = shields.filter((w) => w !== s);
+    });
+    s.showInactive();
+    shields.push(s);
+  }
 }
 
 function togglePopover() {
   if (!win || win.isDestroyed()) return;
   if (win.isVisible()) {
-    win.hide();
+    hideAll();
     return;
   }
   // 定位到菜单栏图标下方居中
@@ -144,6 +193,7 @@ function togglePopover() {
   const y = Math.round(tb.y + tb.height + 6);
   win.setPosition(x, y, false);
   win.showInactive(); // 不抢焦点
+  showShields(); // 拦截面板外的点击
 }
 
 app.whenReady().then(start).catch((e) => {
@@ -158,6 +208,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   quitting = true;
+  hideAll();
   try { engine?.stop(); } catch {}
   try { server?.close(); } catch {}
 });

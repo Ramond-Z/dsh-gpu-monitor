@@ -46,6 +46,7 @@
         "dmg",
         "zip"
       ],
+      "icon": "build/icon.png",
       "category": "public.app-category.developer-tools"
     }
   },
