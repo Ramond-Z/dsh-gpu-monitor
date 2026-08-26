@@ -52,6 +52,11 @@ test("monitor server serves status, UI and order over HTTP", async () => {
       body: JSON.stringify({ foo: 1 }),
     });
     assert.equal(bad.status, 400);
+    // 手动刷新：POST /refresh 触发一次查询并返回新状态
+    const rf = await fetch(`${base}/refresh`, { method: "POST" });
+    const rfState = await rf.json();
+    assert.equal(rfState.servers.length, 3);
+    assert.ok(rfState.at);
   } finally {
     await srv.close();
     engine.stop();
