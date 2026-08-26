@@ -28,7 +28,23 @@ let server = null;
 let win = null;
 let tray = null;
 let shields = []; // 点击拦截层（透明全屏窗，用于"点面板外自动收起"）
+let tipWin = null; // 进程信息悬浮窗（独立透明置顶小窗，可伸出面板窗口范围）
+let tipAnchor = null; // 悬浮窗锚点（方块在面板窗口内的坐标）
 let quitting = false;
+
+// —— 悬浮框（进程提示）桥 ——
+// 面板 DOM 会被窗口边界裁切，提示改在独立小窗里渲染：面板窗口 preload（tip-preload.cjs）
+// 把 tipBridge 暴露给页面，client.js 把提示内容/锚点/主题推给主进程，主进程在 tipWin 里
+// 渲染并定位（可伸出面板窗口，仅夹紧到屏幕工作区）。
+const TIP_PRELOAD = fileURLToPath(new URL("./tip-preload.cjs", import.meta.url));
+const TIP_HOST_PRELOAD = fileURLToPath(new URL("./tip-host-preload.mjs", import.meta.url));
+const TIP_HOST_HTML = `<!doctype html>
+<html>
+<head><meta charset="utf-8">
+<style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}</style>
+</head>
+<body><div id="tip-root"></div></body>
+</html>`;
 
 /** 把 SVG 栅格化成 NativeImage 的离屏渲染（nativeImage 不支持 SVG 数据 URL）。 */
 async function rasterizeSvg(size) {
@@ -126,8 +142,10 @@ async function start() {
   log(`已启动（${UI_MODE} 模式）: ${url}`);
 }
 
-function baseWebPreferences() {
-  return { nodeIntegration: false, contextIsolation: true, sandbox: true };
+function baseWebPreferences(preload) {
+  const wp = { nodeIntegration: false, contextIsolation: true, sandbox: true };
+  if (preload) wp.preload = preload;
+  return wp;
 }
 
 /** 独立窗口模式（GPU_MONITOR_UI_MODE=window）。 */
@@ -140,7 +158,7 @@ function openWindowMode(url) {
     title: "GPU 监控",
     backgroundColor: WINDOW_BG(),
     autoHideMenuBar: true,
-    webPreferences: baseWebPreferences(),
+    webPreferences: baseWebPreferences(TIP_PRELOAD),
   });
   win.loadURL(url);
   win.on("closed", () => {
@@ -178,7 +196,7 @@ async function setupTrayMode(url) {
     alwaysOnTop: true,
     fullscreenable: false,
     backgroundColor: WINDOW_BG(),
-    webPreferences: baseWebPreferences(),
+    webPreferences: baseWebPreferences(TIP_PRELOAD),
   });
   win.loadURL(url);
   // 层级：modal-panel(8) —— 高于拦截层 floating(3)、低于原生右键菜单 pop-up-menu(101)。
@@ -195,9 +213,10 @@ async function setupTrayMode(url) {
   });
 }
 
-/** 收起面板 + 销毁点击拦截层。 */
+/** 收起面板 + 销毁点击拦截层 + 隐藏悬浮框。 */
 function hideAll() {
   if (win && !win.isDestroyed()) win.hide();
+  hideTipWindow();
   for (const s of shields) {
     try { s.destroy(); } catch {}
   }
@@ -259,6 +278,84 @@ function togglePopover() {
   showShields(); // 拦截面板外的点击
 }
 
+// —— 悬浮框（进程提示）独立小窗 ——
+// 提示内容（HTML + 主题变量）由 client.js 经 tip-preload 桥推送；主进程把内容渲染进
+// tipWin（透明、置顶、不抢焦点），按内容尺寸缩窗并锚定在方块旁——可伸出面板窗口，
+// 只夹紧到屏幕工作区内（超出屏幕的部分本来就不可见）。
+function hideTipWindow() {
+  tipAnchor = null;
+  if (tipWin && !tipWin.isDestroyed()) tipWin.hide();
+}
+
+async function ensureTipWindow() {
+  if (tipWin && !tipWin.isDestroyed()) return tipWin;
+  tipWin = new BrowserWindow({
+    width: 1,
+    height: 1,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    focusable: false,
+    // 宿主窗 preload（ESM）需要 sandbox:false；仅本地 data: 页面，无远程内容
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, preload: TIP_HOST_PRELOAD },
+  });
+  try { tipWin.setAlwaysOnTop(true, "modal-panel"); } catch {}
+  try { if (win && !win.isDestroyed()) tipWin.setParentWindow(win); } catch {}
+  // 纯信息展示：鼠标穿透（不挡下方方块悬停 / 其它应用的点击）
+  try { tipWin.setIgnoreMouseEvents(true); } catch {}
+  tipWin.on("closed", () => { tipWin = null; });
+  await tipWin.loadURL("data:text/html," + encodeURIComponent(TIP_HOST_HTML));
+  return tipWin;
+}
+
+function showTipWindow(payload) {
+  if (quitting || !win || win.isDestroyed()) return;
+  const html = String((payload && payload.html) || "");
+  if (!html) { hideTipWindow(); return; }
+  const a = (payload && payload.anchor) || {};
+  tipAnchor = {
+    x: Number(a.x) || 0,
+    y: Number(a.y) || 0,
+    width: Number(a.width) || 0,
+    height: Number(a.height) || 0,
+  };
+  ensureTipWindow()
+    .then((tw) => {
+      if (!tw || tw.isDestroyed() || quitting) return;
+      tw.webContents.send("gpu-monitor-tip-render", payload);
+    })
+    .catch((e) => log("悬浮框窗口失败:", String(e)));
+}
+
+/** 按内容尺寸（来自宿主窗的测量回报）定位并显示悬浮窗；位置可伸出面板窗口。 */
+function positionTipWindow(w, h) {
+  if (!tipWin || tipWin.isDestroyed() || !win || win.isDestroyed() || !tipAnchor) return;
+  const wb = win.getBounds();
+  const wa = screen.getDisplayMatching(wb).workArea;
+  const ax = wb.x + tipAnchor.x;
+  const ay = wb.y + tipAnchor.y;
+  // 左边缘与方块对齐（夹紧到屏幕内；宽度超出面板窗口不受限）
+  const x = Math.max(wa.x + 4, Math.min(ax, wa.x + wa.width - w - 4));
+  // 优先方块下方；下方放不下翻到上方
+  const below = ay + tipAnchor.height + 8;
+  const y = below + h <= wa.y + wa.height - 4 ? below : Math.max(wa.y + 4, ay - h - 8);
+  tipWin.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.max(1, Math.round(w)), height: Math.max(1, Math.round(h)) });
+  tipWin.showInactive(); // 不抢焦点（面板保持打开）
+}
+
+ipcMain.on("gpu-monitor-tip-show", (e, payload) => showTipWindow(payload));
+ipcMain.on("gpu-monitor-tip-hide", () => hideTipWindow());
+ipcMain.on("gpu-monitor-tip-sized", (e, size) => {
+  positionTipWindow(Number(size && size.w) || 1, Number(size && size.h) || 1);
+});
+
 // 拦截层点击 → 收起
 ipcMain.on("gpu-shield-click", hideAll);
 
@@ -275,6 +372,7 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   quitting = true;
   hideAll();
+  if (tipWin && !tipWin.isDestroyed()) { try { tipWin.destroy(); } catch {} }
   try { engine?.stop(); } catch {}
   try { server?.close(); } catch {}
 });
