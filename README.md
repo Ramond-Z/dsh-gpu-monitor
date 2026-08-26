@@ -108,10 +108,27 @@ setsid nohup node lib/sidecar.mjs >> /tmp/dsh-gpu-monitor-sidecar.log 2>&1 < /de
 
 `GET http://127.0.0.1:3499/status`（sidecar）返回同样的 `servers` 结构（`source: "sidecar"`，带 CORS）。
 
+## 在 MacBook 上独立运行
+
+无需 DSH、无需本机 `nvidia-smi`（macOS 也没有）：把仓库拷到 MacBook，装好 Node ≥ 22，运行：
+
+```bash
+npm run macbook    # 等价: bash scripts/macbook.sh
+```
+
+浏览器自动打开 `http://127.0.0.1:3499` —— 解析 MacBook 的 `~/.ssh/config`，探测其中可用的 GPU server 并实时监控（方块图、悬停看进程、拖动排序、高度调整全部可用）。Ctrl-C 退出。
+
+- 默认**不查询本机**（macOS 无 nvidia-smi，sidecar 按平台自动关闭本机查询）；`GPU_MONITOR_INCLUDE_LOCAL=1` 可强制开启
+- 需 MacBook 到各 GPU server 已配 SSH 免密登录（与 Linux 上一致）
+- 分组顺序同样持久化在 `~/.dsh/gpu-monitor-order.json`，跨浏览器/设备共享
+- 任何有 node + ssh 的电脑同样适用：`node lib/sidecar.mjs` 后访问该端口
+- 远程访问改 `GPU_MONITOR_HOST=0.0.0.0`，浏览器访问 `http://<机器IP>:3499`；排序回同步走同源 POST，无需额外配置
+- 技术说明：独立页面通过 `lib/webui.mjs` 里一个 ~60 行的 shim（模拟 `__ModuleLoader__`/React/slots）让 `lib/client.js` **原样**运行，UI 零重复维护；sidecar 直接提供 `/`、`/dsh-shim.js`、`/plugins/dsh-gpu-monitor/client.js`、`/gpu-status.json`、`/gpu/status`、`POST /order`
+
 ## 开发
 
 ```bash
-npm test          # 运行解析单元测试（node:test，16 个用例）
+npm test          # 运行解析单元测试（node:test，19 个用例）
 npm run sidecar   # 前台运行 sidecar
 ```
 

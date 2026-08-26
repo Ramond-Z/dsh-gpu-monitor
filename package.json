@@ -1,7 +1,7 @@
 {
   "name": "dsh-gpu-monitor",
   "version": "0.1.0",
-  "description": "DeepSeek Harness 插件：nvidia-smi GPU 用量实时监控，方块图停靠侧边栏，悬停查看每卡计算进程",
+  "description": "DeepSeek Harness 插件 + 独立程序：nvidia-smi GPU 用量实时监控（多机/SSH），侧边栏方块图或独立网页，悬停查看每卡计算进程；npm run macbook 可在 MacBook 上独立运行",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -18,7 +18,9 @@
   ],
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",
-    "sidecar": "node lib/sidecar.mjs"
+    "sidecar": "node lib/sidecar.mjs",
+    "macbook": "bash scripts/macbook.sh",
+    "start": "node lib/sidecar.mjs"
   },
   "dsh": {
     "bundle": {
