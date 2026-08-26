@@ -6,8 +6,13 @@ import { deflateSync } from "node:zlib";
 
 const svgRaw = readFileSync(new URL("./icon.svg", import.meta.url), "utf8");
 
+// 线条加粗：所有 path 都有 transform="scale(2 2)"，注入的描边在其局部坐标系生效、
+// 再被放大 2 倍（实际生效 ≈ 2×ICON_STROKE/1024）。可调大调小（线条粗细实验）。
+const ICON_STROKE = 11;
+
 /**
- * 取处理过的 SVG 标记：去掉 XML 声明与 XMP metadata，注入 viewBox 以便任意缩放。
+ * 取处理过的 SVG 标记：去掉 XML 声明与 XMP metadata，注入 viewBox 以便任意缩放，
+ * 并给每个 path 加同色描边（stroke-width）把细线条加粗约一倍。
  * @returns {string}
  */
 export function iconSvgMarkup() {
@@ -18,7 +23,11 @@ export function iconSvgMarkup() {
     .replace(/<svg([^>]*)>/, (m, attrs) => {
       const noSize = attrs.replace(/\s(width|height)="[^"]*"/g, "");
       return `<svg${noSize} viewBox="0 0 1024 1024">`;
-    });
+    })
+    .replace(
+      /<path transform="scale\(2 2\)"/g,
+      `<path transform="scale(2 2)" stroke="#000" stroke-width="${ICON_STROKE}" stroke-linejoin="miter"`
+    );
 }
 
 /** SVG 的 data URL（可直接给 <img src>）。 */
