@@ -29,15 +29,18 @@ let win = null;
 let tray = null;
 let shields = []; // 点击拦截层（透明全屏窗，用于"点面板外自动收起"）
 let tipWin = null; // 进程信息悬浮窗（独立透明置顶小窗，可伸出面板窗口范围）
+let tipWinReady = false; // 悬浮窗宿主页是否已加载完成（此后才可 executeJavaScript）
+let tipPending = null; // 悬浮窗未就绪时暂存的最新渲染内容
 let tipAnchor = null; // 悬浮窗锚点（方块在面板窗口内的坐标）
 let quitting = false;
 
 // —— 悬浮框（进程提示）桥 ——
 // 面板 DOM 会被窗口边界裁切，提示改在独立小窗里渲染：面板窗口 preload（tip-preload.cjs）
-// 把 tipBridge 暴露给页面，client.js 把提示内容/锚点/主题推给主进程，主进程在 tipWin 里
-// 渲染并定位（可伸出面板窗口，仅夹紧到屏幕工作区）。
+// 把 tipBridge 暴露给页面，client.js 把提示内容/锚点/主题推给主进程；主进程在 tipWin 里用
+// executeJavaScript 渲染并测量（主世界执行，不依赖 preload/事件时序），随后定位显示
+// （可伸出面板窗口，仅夹紧到屏幕工作区）。悬浮窗渲染成功后回报 ack，客户端据此确认
+// 可用；不可用则退回页面内提示（保证任何情况下悬停都有提示）。
 const TIP_PRELOAD = fileURLToPath(new URL("./tip-preload.cjs", import.meta.url));
-const TIP_HOST_PRELOAD = fileURLToPath(new URL("./tip-host-preload.mjs", import.meta.url));
 const TIP_HOST_HTML = `<!doctype html>
 <html>
 <head><meta charset="utf-8">
@@ -279,9 +282,9 @@ function togglePopover() {
 }
 
 // —— 悬浮框（进程提示）独立小窗 ——
-// 提示内容（HTML + 主题变量）由 client.js 经 tip-preload 桥推送；主进程把内容渲染进
-// tipWin（透明、置顶、不抢焦点），按内容尺寸缩窗并锚定在方块旁——可伸出面板窗口，
-// 只夹紧到屏幕工作区内（超出屏幕的部分本来就不可见）。
+// 提示内容由 client.js 经 tip-preload 桥推送；主进程把内容写进 tipWin 的宿主页
+// （executeJavaScript 在主世界执行，渲染 + 测量一次完成），按内容尺寸缩窗并锚定在
+// 方块旁——可伸出面板窗口，只夹紧到屏幕工作区内。
 function hideTipWindow() {
   tipAnchor = null;
   if (tipWin && !tipWin.isDestroyed()) tipWin.hide();
@@ -289,6 +292,7 @@ function hideTipWindow() {
 
 async function ensureTipWindow() {
   if (tipWin && !tipWin.isDestroyed()) return tipWin;
+  tipWinReady = false;
   tipWin = new BrowserWindow({
     width: 1,
     height: 1,
@@ -303,16 +307,45 @@ async function ensureTipWindow() {
     skipTaskbar: true,
     hasShadow: false,
     focusable: false,
-    // 宿主窗 preload（ESM）需要 sandbox:false；仅本地 data: 页面，无远程内容
-    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, preload: TIP_HOST_PRELOAD },
+    // 无 preload：渲染走 executeJavaScript（主世界），宿主页只是空壳
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
   });
   try { tipWin.setAlwaysOnTop(true, "modal-panel"); } catch {}
   try { if (win && !win.isDestroyed()) tipWin.setParentWindow(win); } catch {}
   // 纯信息展示：鼠标穿透（不挡下方方块悬停 / 其它应用的点击）
   try { tipWin.setIgnoreMouseEvents(true); } catch {}
-  tipWin.on("closed", () => { tipWin = null; });
+  tipWin.on("closed", () => { tipWin = null; tipWinReady = false; });
+  tipWin.webContents.once("did-finish-load", () => {
+    tipWinReady = true;
+    flushTipRender();
+  });
   await tipWin.loadURL("data:text/html," + encodeURIComponent(TIP_HOST_HTML));
   return tipWin;
+}
+
+/** 把暂存的最新提示渲染进悬浮窗并测量尺寸（悬浮窗就绪后调用）。 */
+function flushTipRender() {
+  if (!tipWin || tipWin.isDestroyed() || !tipWinReady || !tipPending) return;
+  const p = tipPending;
+  tipPending = null;
+  const theme = p.theme === "light" ? "light" : "dark";
+  const js =
+    "(function () {" +
+    "var de=document.documentElement;" +
+    "de.dataset.gpuTheme=" + JSON.stringify(theme) + ";" +
+    "de.style.cssText=" + JSON.stringify(String(p.vars || "")) + ";" +
+    "document.getElementById('tip-root').innerHTML=" + JSON.stringify(String(p.html || "")) + ";" +
+    "return {w:de.scrollWidth,h:de.scrollHeight};" +
+    "})()";
+  tipWin.webContents
+    .executeJavaScript(js)
+    .then((size) => {
+      if (quitting || !tipWin || tipWin.isDestroyed() || !tipAnchor) return;
+      positionTipWindow(Number(size && size.w) || 1, Number(size && size.h) || 1);
+      // 渲染确认回报面板窗口：客户端据此判断悬浮窗可用（不可用则退回页面内提示）
+      try { if (win && !win.isDestroyed()) win.webContents.send("gpu-monitor-tip-ack"); } catch {}
+    })
+    .catch((e) => log("悬浮框渲染失败:", String(e)));
 }
 
 function showTipWindow(payload) {
@@ -326,15 +359,15 @@ function showTipWindow(payload) {
     width: Number(a.width) || 0,
     height: Number(a.height) || 0,
   };
-  ensureTipWindow()
-    .then((tw) => {
-      if (!tw || tw.isDestroyed() || quitting) return;
-      tw.webContents.send("gpu-monitor-tip-render", payload);
-    })
-    .catch((e) => log("悬浮框窗口失败:", String(e)));
+  tipPending = payload;
+  if (tipWin && !tipWin.isDestroyed() && tipWinReady) {
+    flushTipRender();
+    return;
+  }
+  ensureTipWindow().catch((e) => log("悬浮框窗口失败:", String(e)));
 }
 
-/** 按内容尺寸（来自宿主窗的测量回报）定位并显示悬浮窗；位置可伸出面板窗口。 */
+/** 按内容尺寸（来自 executeJavaScript 的测量）定位并显示悬浮窗；位置可伸出面板窗口。 */
 function positionTipWindow(w, h) {
   if (!tipWin || tipWin.isDestroyed() || !win || win.isDestroyed() || !tipAnchor) return;
   const wb = win.getBounds();
@@ -352,9 +385,6 @@ function positionTipWindow(w, h) {
 
 ipcMain.on("gpu-monitor-tip-show", (e, payload) => showTipWindow(payload));
 ipcMain.on("gpu-monitor-tip-hide", () => hideTipWindow());
-ipcMain.on("gpu-monitor-tip-sized", (e, size) => {
-  positionTipWindow(Number(size && size.w) || 1, Number(size && size.h) || 1);
-});
 
 // 拦截层点击 → 收起
 ipcMain.on("gpu-shield-click", hideAll);

@@ -7,4 +7,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("__gpuMonitorTip", {
   show: (payload) => ipcRenderer.send("gpu-monitor-tip-show", payload),
   hide: () => ipcRenderer.send("gpu-monitor-tip-hide"),
+  // 主进程在悬浮窗渲染成功后回报 ack；客户端据此确认悬浮窗可用，
+  // 不可用（如窗口创建/渲染失败）则退回页面内提示，保证悬停始终有提示。
+  onAck: (cb) => ipcRenderer.on("gpu-monitor-tip-ack", () => { try { cb(); } catch {} }),
 });
