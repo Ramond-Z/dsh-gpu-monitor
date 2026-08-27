@@ -285,6 +285,8 @@ function togglePopover() {
 // 提示内容由 client.js 经 tip-preload 桥推送；主进程把内容写进 tipWin 的宿主页
 // （executeJavaScript 在主世界执行，渲染 + 测量一次完成），按内容尺寸缩窗并锚定在
 // 方块旁——可伸出面板窗口，只夹紧到屏幕工作区内。
+// 注：focusable:true + showInactive 与拦截层（shields）同款——macOS 上 focusable:false
+// 的窗口可能无法正常置顶显示；showInactive 保证不抢焦点（面板保持打开）。
 function hideTipWindow() {
   tipAnchor = null;
   if (tipWin && !tipWin.isDestroyed()) tipWin.hide();
@@ -306,7 +308,7 @@ async function ensureTipWindow() {
     fullscreenable: false,
     skipTaskbar: true,
     hasShadow: false,
-    focusable: false,
+    focusable: true, // 同拦截层：macOS 上 focusable:false 可能显示不出来
     // 无 preload：渲染走 executeJavaScript（主世界），宿主页只是空壳
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
   });
@@ -317,9 +319,11 @@ async function ensureTipWindow() {
   tipWin.on("closed", () => { tipWin = null; tipWinReady = false; });
   tipWin.webContents.once("did-finish-load", () => {
     tipWinReady = true;
+    log("悬浮窗: 页面加载完成");
     flushTipRender();
   });
   await tipWin.loadURL("data:text/html," + encodeURIComponent(TIP_HOST_HTML));
+  log("悬浮窗: 窗口已创建");
   return tipWin;
 }
 
@@ -342,8 +346,6 @@ function flushTipRender() {
     .then((size) => {
       if (quitting || !tipWin || tipWin.isDestroyed() || !tipAnchor) return;
       positionTipWindow(Number(size && size.w) || 1, Number(size && size.h) || 1);
-      // 渲染确认回报面板窗口：客户端据此判断悬浮窗可用（不可用则退回页面内提示）
-      try { if (win && !win.isDestroyed()) win.webContents.send("gpu-monitor-tip-ack"); } catch {}
     })
     .catch((e) => log("悬浮框渲染失败:", String(e)));
 }
@@ -381,6 +383,7 @@ function positionTipWindow(w, h) {
   const y = below + h <= wa.y + wa.height - 4 ? below : Math.max(wa.y + 4, ay - h - 8);
   tipWin.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.max(1, Math.round(w)), height: Math.max(1, Math.round(h)) });
   tipWin.showInactive(); // 不抢焦点（面板保持打开）
+  log(`悬浮窗: 定位显示于 ${Math.round(x)},${Math.round(y)} (${Math.round(w)}x${Math.round(h)})`);
 }
 
 ipcMain.on("gpu-monitor-tip-show", (e, payload) => showTipWindow(payload));
