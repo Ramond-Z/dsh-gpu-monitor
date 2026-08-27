@@ -35,12 +35,12 @@ let tipAnchor = null; // 悬浮窗锚点（方块在面板窗口内的坐标）
 let quitting = false;
 
 // —— 悬浮框（进程提示）桥 ——
-// 面板 DOM 会被窗口边界裁切，提示改在独立小窗里渲染：面板窗口 preload（tip-preload.cjs）
-// 把 tipBridge 暴露给页面，client.js 把提示内容/锚点/主题推给主进程；主进程在 tipWin 里用
-// executeJavaScript 渲染并测量（主世界执行，不依赖 preload/事件时序），随后定位显示
-// （可伸出面板窗口，仅夹紧到屏幕工作区）。悬浮窗渲染成功后回报 ack，客户端据此确认
-// 可用；不可用则退回页面内提示（保证任何情况下悬停都有提示）。
-const TIP_PRELOAD = fileURLToPath(new URL("./tip-preload.cjs", import.meta.url));
+// 面板 DOM 会被窗口边界裁切，提示改在独立小窗里渲染：面板窗口 preload（tip-preload.mjs，
+// ESM + sandbox:false，与拦截层同一套已验证模式）把 tipBridge 暴露给页面，client.js 把
+// 提示内容/锚点/主题推给主进程；主进程在 tipWin 里用 executeJavaScript 渲染并测量
+// （主世界执行，不依赖 preload/事件时序），随后定位显示（可伸出面板窗口，仅夹紧到
+// 屏幕工作区）。页面内提示始终显示作为保底。
+const TIP_PRELOAD = fileURLToPath(new URL("./tip-preload.mjs", import.meta.url));
 const TIP_HOST_HTML = `<!doctype html>
 <html>
 <head><meta charset="utf-8">
@@ -151,6 +151,11 @@ function baseWebPreferences(preload) {
   return wp;
 }
 
+/** 面板窗口 webPreferences：ESM preload 需要 sandbox:false（与拦截层同一套已验证模式）。 */
+function panelWebPreferences() {
+  return { ...baseWebPreferences(), preload: TIP_PRELOAD, sandbox: false };
+}
+
 /** 独立窗口模式（GPU_MONITOR_UI_MODE=window）。 */
 function openWindowMode(url) {
   win = new BrowserWindow({
@@ -161,7 +166,7 @@ function openWindowMode(url) {
     title: "GPU 监控",
     backgroundColor: WINDOW_BG(),
     autoHideMenuBar: true,
-    webPreferences: baseWebPreferences(TIP_PRELOAD),
+    webPreferences: panelWebPreferences(),
   });
   win.loadURL(url);
   win.on("closed", () => {
@@ -199,7 +204,7 @@ async function setupTrayMode(url) {
     alwaysOnTop: true,
     fullscreenable: false,
     backgroundColor: WINDOW_BG(),
-    webPreferences: baseWebPreferences(TIP_PRELOAD),
+    webPreferences: panelWebPreferences(),
   });
   win.loadURL(url);
   // 层级：modal-panel(8) —— 高于拦截层 floating(3)、低于原生右键菜单 pop-up-menu(101)。
@@ -322,7 +327,19 @@ async function ensureTipWindow() {
     log("悬浮窗: 页面加载完成");
     flushTipRender();
   });
-  await tipWin.loadURL("data:text/html," + encodeURIComponent(TIP_HOST_HTML));
+  tipWin.webContents.once("did-fail-load", (event, code, desc) => {
+    log("悬浮窗: 页面加载失败", code, desc);
+    try { tipWin.destroy(); } catch {} // 销毁以便下次重试
+  });
+  await tipWin.loadURL("data:text/html," + encodeURIComponent(TIP_HOST_HTML)).catch((e) => {
+    log("悬浮窗: loadURL 失败", String(e));
+    try { tipWin.destroy(); } catch {}
+  });
+  // 保险：loadURL 已返回但 did-finish-load 未触发时也放行
+  if (tipWin && !tipWin.isDestroyed() && !tipWinReady) {
+    tipWinReady = true;
+    flushTipRender();
+  }
   log("悬浮窗: 窗口已创建");
   return tipWin;
 }
@@ -350,8 +367,14 @@ function flushTipRender() {
     .catch((e) => log("悬浮框渲染失败:", String(e)));
 }
 
+let tipBridgeSeen = false; // 是否收到过页面来的 show（诊断：preload 桥是否连通）
+
 function showTipWindow(payload) {
   if (quitting || !win || win.isDestroyed()) return;
+  if (!tipBridgeSeen) {
+    tipBridgeSeen = true;
+    log("悬浮窗: 桥已连通（收到首次 show）");
+  }
   const html = String((payload && payload.html) || "");
   if (!html) { hideTipWindow(); return; }
   const a = (payload && payload.anchor) || {};
