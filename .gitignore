@@ -4,3 +4,4 @@ dist/
 *.log
 build/
 .DS_Store
+*.patch
