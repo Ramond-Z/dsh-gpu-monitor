@@ -7,6 +7,7 @@ DeepSeek Harness 插件：利用 `nvidia-smi` 实时监控 **多台机器** 的 
   - **填充百分比 = 显存占用**，方块上写 `已用/总量`（G）
   - **填充颜色 = 功率**（按 功率/功率上限 占比分级：绿 <40% < 黄 <70% < 橙 <90% < 红）
   - 方块上写实时功率（W）
+- **每台机器的 CPU / 内存占用**：方块区右侧两条**竖向细条**（C = CPU、M = 内存），与 GPU 方块同一套视觉——**填充高度 = 占用率**、**颜色 = 同一套四级色阶**（绿 <40% < 黄 <70% < 橙 <90% < 红）、条内竖排百分数；两条随方块区高度拉伸，悬停细条显示 CPU 占用（区间平均）/ 核数 / 负载与内存已用/总量。面板不够宽时细条整块落到方块下方（方块每行数量不变）。数据取自 `/proc/stat`、`/proc/meminfo`、`/proc/loadavg`（**仅 Linux**；非 Linux 机器自动不显示细条）
 - **鼠标悬停方块 ~0.5s** → 显示该卡上的**计算进程**：属主 / PID / 占用显存 / 命令行（触摸设备点按查看）。Electron 原生应用里提示渲染在**独立悬浮窗**中，可伸出面板窗口范围；宽度上限 480px，**每个进程单行展示，属主/显存前缀固定不动，超宽的完整命令行自动滚动（跑马灯，固定 px/s 速度、不同长度行同步滚动，悬停该行暂停），无需手动滚动**；进程很多时框高上限 320px、内部滚动条查看；光标移入提示即可滚动/选中，移出自动恢复鼠标穿透；**悬浮窗正常时只显示悬浮窗一个框**（页面内提示隐藏），悬浮窗失败自动退回页面内提示；浏览器/DSH 内为页面内提示（同款单行跑马灯展示）
 - 面板**顶部把手可上下拖动**调整面板高度（64px ~ 90vh，记忆在 localStorage；双击把手恢复默认 42vh 上限）
 - **拖动分组表头**可调整服务器上下顺序（⠿ 提示）。顺序**宿主侧持久化**（宿主插件与 sidecar 共用 `~/.dsh/gpu-monitor-order.json`，带时间戳），跨浏览器/设备共享"上次退出时的顺序"；本浏览器同时缓存于 localStorage（`dsh-gpu-monitor:order`），sidecar 短暂离线时仍生效，恢复后自动回同步。调和规则保留**含探测不可达机器**在内的全部已保存顺序——机器瞬时掉线不会把它的排序位挤掉，恢复后仍原位
@@ -18,7 +19,7 @@ DeepSeek Harness 插件：利用 `nvidia-smi` 实时监控 **多台机器** 的 
 DSH 插件与 MacBook 独立程序共享同一套核心，宿主/传输层只是薄壳：
 
 ```
-lib/query.mjs     底层：nvidia-smi/ps 查询、CSV 解析、目标参数（宿主与 sidecar 共用）
+lib/query.mjs     底层：nvidia-smi/ps 查询、CSV 解析、CPU/内存采样（/proc）、目标参数（宿主与 sidecar 共用）
 lib/sshconfig.mjs 底层：~/.ssh/config 解析（Include 展开、Host * 默认、first-wins）
 lib/orderstore.mjs 分组顺序持久化（{o, t} 文件存取，时间戳防旧覆盖）
 lib/settings.mjs  运行时设置：设置页可调参数 + server 选取（校验、持久化，见下方"设置页"）
@@ -147,6 +148,8 @@ setsid nohup node lib/sidecar.mjs >> /tmp/dsh-gpu-monitor-sidecar.log 2>&1 < /de
   "source": "host",
   "servers": [{
     "host": "local", "label": "本机", "ok": true, "at": "ISO 时间",
+    "cpu": { "pct": 54.8, "cores": 48, "load1": 29.25, "windowSec": 3 },
+    "mem": { "usedMB": 54661, "totalMB": 128552, "pct": 42.5 },
     "gpus": [{
       "index": "0", "name": "NVIDIA GeForce RTX 3090",
       "memUsedMB": 15808, "memTotalMB": 24576,
@@ -158,6 +161,9 @@ setsid nohup node lib/sidecar.mjs >> /tmp/dsh-gpu-monitor-sidecar.log 2>&1 < /de
 ```
 
 `GET http://127.0.0.1:3499/status`（sidecar）返回同样的 `servers` 结构（`source: "sidecar"`，带 CORS）。
+
+> `cpu` / `mem` 是每台机器的系统占用，与 `gpus` 相互独立：系统采样失败（非 Linux、`/proc` 不可读、超时）只是没有这两个字段，不影响 `ok` 与 GPU 数据。
+> `cpu.pct` 是**距上次采样区间的平均占用**（采样间隔 = 查询间隔），因此每台机器**第一次采样只有内存、`pct` 为 `null`**（界面显示 `—`，下一轮起有值）；`windowSec` 是本次平均覆盖的秒数；两次采样间隔不足 500ms（如手动刷新紧跟周期查询）时沿用上次读数，避免 0 秒窗口的噪声。`mem.pct = (MemTotal - MemAvailable) / MemTotal`。
 
 `GET /settings`（宿主同源路由 / sidecar / Electron 都有）—— 当前生效设置 + 候选 server 列表：
 
@@ -215,10 +221,11 @@ npm run macbook        # 等价: bash scripts/macbook.sh
 
 浏览器自动打开 `http://127.0.0.1:3499`。Ctrl-C 退出。
 
-两种方式都解析 MacBook 的 `~/.ssh/config`，探测其中可用的 GPU server 并实时监控（方块图、悬停看进程、拖动排序、高度调整、顶栏状态条全部可用）。
+两种方式都解析 MacBook 的 `~/.ssh/config`，探测其中可用的 GPU server 并实时监控（方块图、悬停看进程、**CPU/内存细条**、拖动排序、高度调整、顶栏状态条全部可用）。
 
 - **主题自动跟随 macOS 系统深浅色**（原生应用与网页模式一致；菜单栏图标为 template 图片同样随系统变色）
-- 默认**不查询本机**（macOS 无 nvidia-smi，按平台自动关闭）；`GPU_MONITOR_INCLUDE_LOCAL=1` 可强制开启
+- 默认**不查询本机**（macOS 无 nvidia-smi，按平台自动关闭）；`GPU_MONITOR_INCLUDE_LOCAL=1` 可强制开启。面板因此只显示有 GPU 的机器——**Mac 自己的 CPU/内存不显示**（macOS 无 `/proc`，且本机默认不查）
+- CPU/内存细条来自各 **GPU server** 的 Linux `/proc`：与 GPU 数据同一轮查询、同一份快照，MacBook 端与 DSH 侧边栏显示完全一致（共用 `lib/client.js`）
 - 需 MacBook 到各 GPU server 已配 SSH 免密登录（与 Linux 上一致）
 - **SSH 连接复用**：对每台 GPU server 只建立一条常驻 SSH 连接，各轮查询/探测/进程查询都经本地 socket 复用同一连接，不再反复新建 sshd 会话，对 server 的资源占用很小（退出时自动 `ssh -O exit` 关闭；可用 `GPU_MONITOR_SSH_CONTROL_PERSIST=0` 关闭复用）
 - 分组顺序同样持久化在 `~/.dsh/gpu-monitor-order.json`，跨浏览器/设备共享
@@ -229,11 +236,12 @@ npm run macbook        # 等价: bash scripts/macbook.sh
 ## 开发
 
 ```bash
-npm test          # 运行单元测试（node:test，60 个用例）
+npm test          # 运行单元测试（node:test，68 个用例）
 npm run sidecar   # 前台运行 sidecar
 ```
 
 - 查询经 `spawn` 数组参数执行，永不 `shell:true`；查询失败只记录错误状态，不搞崩启动
+- CPU/内存采样用一次 `cat /proc/stat /proc/meminfo /proc/loadavg`（同样是数组参数、无 shell 字符串），与 GPU 查询**并行**发起；CPU% 由相邻两次 `/proc/stat` 计数器差算出（`lib/query.mjs` 的 `parseSystemSample`/`cpuUsagePct`，纯函数、有单测）
 - 远程机 SSH 走**连接复用**（`lib/query.mjs` 的 ControlMaster/ControlPersist）：每台 server 一条常驻主连接，轮询与探测都复用，不再每轮新建 sshd 会话；单台超时被 SIGKILL 会顺手清理残留控制 socket，引擎 `stop()` 时统一 `ssh -O exit` 关闭
 - 探测语义：“可用”= 能 SSH 免密登录且 `nvidia-smi` 至少报 1 张 GPU；不可达/无 GPU 的主机（如 `github.com`）自动排除，失败不致命
 - 多机查询并行执行，单台超时只影响该台
