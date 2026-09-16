@@ -51,3 +51,21 @@ test("injectTheme 每次都重写 <style>（HMR 换模块后旧样式元素仍�
   assert.ok(/s\.textContent\s*=/.test(body), "injectTheme 必须写入样式内容");
   assert.ok(body.includes(".gpu-grid") && body.includes(".gpu-sys"), "样式里应包含方块网格与 CPU/内存细条规则");
 });
+
+test("网格 flex-basis 必须等于「4 个方块一行」的精确宽度", () => {
+  // 回归守卫：flex 只在"4 个方块 + 细条"同行放得下时才同行，否则把细条换到下一行；
+  // 若 basis 小于 4 个方块的实际宽度，flex 会把网格压窄 → 每行只放得下 3 个方块（曾经如此）。
+  // 而方块实际宽度取决于 box-sizing：content-box 下 1px 边框每块多占 2px，算式必须与之一致。
+  const src = readFileSync(CLIENT_JS_PATH, "utf8");
+  const m = /\.gpu-grid\{[^}]*gap:(\d+)px;flex:1 1 (\d+)px/.exec(src);
+  assert.ok(m, "应能在样式中找到 .gpu-grid 的 gap 与 flex-basis");
+  const gap = Number(m[1]);
+  const basis = Number(m[2]);
+  const bw = Number(/box-sizing:border-box;position:relative;width:(\d+)px;height:(\d+)px/.exec(src)?.[1]);
+  assert.ok(Number.isFinite(bw), "方块应显式声明 box-sizing:border-box 与宽高");
+  assert.equal(basis, bw * 4 + gap * 3, `网格 flex-basis(${basis}) 必须等于 4 块一行宽度(${bw * 4 + gap * 3})`);
+  assert.ok(
+    /\.gpu-sys-track\{box-sizing:border-box/.test(src),
+    "细条轨道也要 border-box，宽度才等于给网格留白时用的那个数"
+  );
+});
