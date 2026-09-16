@@ -39,12 +39,30 @@ let quitting = false;
 // ESM + sandbox:false，与拦截层同一套已验证模式）把 tipBridge 暴露给页面，client.js 把
 // 提示内容/锚点/主题推给主进程；主进程在 tipWin 里用 executeJavaScript 渲染并测量
 // （主世界执行，不依赖 preload/事件时序），随后定位显示（可伸出面板窗口，仅夹紧到
-// 屏幕工作区）。页面内提示始终显示作为保底。
+// 屏幕工作区）。页面内提示作为保底（悬浮窗失败时经 fallback 信号退回）。
+// 悬浮窗内容尺寸上限：宽 480px（超出面板、但不占满屏幕）、高 320px（超出内部滚动），
+// 与页面内提示（lib/client.js 的 IN_PAGE_TIP_LAYOUT）保持一致。
+const MAX_TIP_W = 480;
+const MAX_TIP_H = 320;
 const TIP_PRELOAD = fileURLToPath(new URL("./tip-preload.mjs", import.meta.url));
 const TIP_HOST_HTML = `<!doctype html>
 <html>
 <head><meta charset="utf-8">
-<style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}</style>
+<style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}
+/* 提示盒滚动条常显（灰半透明细条），进程很多时可见 */
+#tip-root > div::-webkit-scrollbar{width:8px}
+#tip-root > div::-webkit-scrollbar-thumb{background:rgba(128,128,128,.45);border-radius:4px}
+#tip-root > div::-webkit-scrollbar-track{background:transparent}
+/* 进程行跑马灯：固定前缀（属主+显存）不滚动，命令视口超宽时自动滚动（悬停暂停）。
+   速度 = 设置值（px/s）字面含义：时长 = 距离 / 速度，不同长度的行滚动同步。 */
+.gpu-tip-line{display:flex;align-items:center;min-width:0}
+.gpu-tip-line .gpu-tip-line-prefix{flex:none;white-space:nowrap}
+.gpu-tip-line .gpu-tip-line-inner{flex:1;min-width:0;overflow:hidden;white-space:nowrap;position:relative}
+.gpu-tip-line .gpu-tip-line-text{display:inline-block;white-space:nowrap;will-change:transform}
+.gpu-tip-line.gpu-marquee .gpu-tip-line-text{animation:gpu-tip-marquee var(--gpu-marquee-dur,10s) linear .8s infinite}
+.gpu-tip-line.gpu-marquee:hover .gpu-tip-line-text{animation-play-state:paused}
+@keyframes gpu-tip-marquee{0%{transform:translateX(0)}100%{transform:translateX(calc(-1 * var(--gpu-marquee-dist,0px)))}}
+</style>
 </head>
 <body><div id="tip-root"></div></body>
 </html>`;
@@ -136,11 +154,7 @@ async function start() {
     openWindowMode(url);
   } else {
     await setupTrayMode(url);
-    // 启动后自动弹出一次监控面板：菜单栏常驻应用无 Dock 图标、无窗口，
-    // 不弹面板的话用户会以为"启动没反应"
-    setTimeout(() => {
-      try { togglePopover(); } catch {}
-    }, 600);
+    // 不自动弹出面板：菜单栏常驻（无 Dock 图标），点菜单栏图标才显示监控面板
   }
   log(`已启动（${UI_MODE} 模式）: ${url}`);
 }
@@ -156,9 +170,13 @@ function panelWebPreferences() {
   return { ...baseWebPreferences(), preload: TIP_PRELOAD, sandbox: false };
 }
 
-/** 独立窗口模式（GPU_MONITOR_UI_MODE=window）。 */
+/** 独立窗口模式（GPU_MONITOR_UI_MODE=window）。显式初始位置（光标所在显示器居中），
+ *  避免 macOS 窗口状态恢复/默认级联把窗口放到奇怪的位置。 */
 function openWindowMode(url) {
+  const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
   win = new BrowserWindow({
+    x: Math.round(wa.x + Math.max(12, (wa.width - 252) / 2)),
+    y: Math.round(wa.y + Math.max(24, (wa.height - 760) / 3)),
     width: 252,
     height: 760,
     minWidth: 240,
@@ -212,7 +230,11 @@ async function setupTrayMode(url) {
   win.setAlwaysOnTop(true, "modal-panel");
   // 不能调用 setVisibleOnAllWorkspaces(true)：它会内部触发 dock.show()，把 Dock 图标重新唤出
   // （electron#25368），与 dock.hide() 打架导致启动时 Dock 图标闪现
-  win.on("blur", hideAll); // 保险：面板若拿到焦点再失去也收起
+  win.on("blur", () => {
+    // 焦点只是移到了提示窗（点击提示选中/滚动）：不算"点外面"，不收起
+    if (tipWin && !tipWin.isDestroyed() && BrowserWindow.getFocusedWindow() === tipWin) return;
+    hideAll(); // 保险：面板若拿到焦点再失去也收起
+  });
   // 关闭（Cmd+W / 退出手势）→ 隐藏而非退出
   win.on("close", (e) => {
     if (quitting) return;
@@ -269,21 +291,51 @@ function showShields() {
   }
 }
 
+/** 菜单栏图标坐标是否可用：macOS 上图标可能晚于窗口就绪，getBounds 短暂返回 0/坏值
+ *  （y 应在菜单栏带内 ≈0~60；出现大 y/零尺寸即视为未就位）。 */
+function trayBoundsOk(tb) {
+  return !!(tb && tb.width > 0 && tb.height > 0 && Number.isFinite(tb.y) && tb.y >= 0 && tb.y < 200);
+}
+
+let popoverRetries = 0; // 图标未就位时的重试计数（防无限重试）
+
 function togglePopover() {
   if (!win || win.isDestroyed()) return;
   if (win.isVisible()) {
     hideAll();
     return;
   }
-  // 弹出定位：面板左边缘与菜单栏图标左边缘对齐（macOS 常见 popover 风格）；超出屏幕时夹紧
-  const tb = tray.getBounds();
   const wb = win.getBounds();
-  const wa = screen.getDisplayMatching(tb).workArea;
-  const x = Math.max(wa.x + 4, Math.min(tb.x, wa.x + wa.width - wb.width - 4));
-  const y = Math.round(tb.y + tb.height + 6);
+  const tb = tray.getBounds();
+  let x, y, wa;
+  if (trayBoundsOk(tb)) {
+    popoverRetries = 0;
+    // 弹出定位：面板左边缘与菜单栏图标左边缘对齐（macOS 常见 popover 风格）；超出屏幕时夹紧
+    wa = screen.getDisplayMatching(tb).workArea;
+    x = Math.max(wa.x + 4, Math.min(tb.x, wa.x + wa.width - wb.width - 4));
+    y = Math.round(tb.y + tb.height + 6);
+  } else if (popoverRetries < 8) {
+    // 图标未就位（启动自动弹出最容易撞上）：稍后重试定位，避免面板落到错误角落
+    popoverRetries++;
+    setTimeout(() => {
+      try { if (win && !win.isDestroyed() && !win.isVisible()) togglePopover(); } catch {}
+    }, 400);
+    return;
+  } else {
+    // 重试耗尽仍拿不到图标坐标：兜底弹到光标所在显示器右上角（菜单栏图标常见位置），
+    // 总比永不弹出/落错角落好
+    wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+    x = wa.x + wa.width - wb.width - 12;
+    y = wa.y + 8;
+  }
   win.setPosition(x, y, false);
   win.showInactive(); // 不抢焦点
+  // 防 macOS 窗口状态恢复在 show 后异步覆盖帧位置：下一拍再断言一次
+  setImmediate(() => {
+    try { if (win && !win.isDestroyed() && win.isVisible()) win.setPosition(x, y, false); } catch {}
+  });
   showShields(); // 拦截面板外的点击
+  log(`面板: 弹出于 ${Math.round(x)},${Math.round(y)}`);
 }
 
 // —— 悬浮框（进程提示）独立小窗 ——
@@ -294,7 +346,53 @@ function togglePopover() {
 // 的窗口可能无法正常置顶显示；showInactive 保证不抢焦点（面板保持打开）。
 function hideTipWindow() {
   tipAnchor = null;
-  if (tipWin && !tipWin.isDestroyed()) tipWin.hide();
+  tipHidePending = false;
+  stopTipCursorWatch();
+  tipHovering = false;
+  if (tipWin && !tipWin.isDestroyed()) {
+    try { tipWin.setIgnoreMouseEvents(true); } catch {}
+    tipWin.hide();
+  }
+}
+
+// —— 悬浮窗鼠标穿透跟随光标 ——
+// 悬浮窗平时鼠标穿透（不挡下方方块/其它应用点击）；光标进入悬浮窗时取消穿透，
+// 让提示盒的滚动条可用（滚轮/触控板滚动看完整命令）；移出后恢复穿透。
+// 光标在悬浮窗内期间收到的 hide 信号（面板那边方块 mouseleave 触发）先挂起，
+// 等光标移出悬浮窗再隐藏——否则一进提示去滚动它就被关掉。
+let tipHovering = false;
+let tipHidePending = false;
+let tipCursorTimer = null;
+
+function stopTipCursorWatch() {
+  if (tipCursorTimer) { clearInterval(tipCursorTimer); tipCursorTimer = null; }
+}
+
+/** 悬浮窗可见期间每 150ms 轮询光标位置，按是否在窗内切换鼠标穿透。 */
+function startTipCursorWatch() {
+  if (tipCursorTimer) return;
+  tipCursorTimer = setInterval(() => {
+    if (quitting || !tipWin || tipWin.isDestroyed() || !tipWin.isVisible()) {
+      stopTipCursorWatch();
+      return;
+    }
+    let inside = false;
+    try {
+      const cp = screen.getCursorScreenPoint();
+      const b = tipWin.getBounds();
+      inside = cp.x >= b.x - 4 && cp.x <= b.x + b.width + 4 && cp.y >= b.y - 4 && cp.y <= b.y + b.height + 4;
+    } catch {}
+    if (inside !== tipHovering) {
+      tipHovering = inside;
+      try { tipWin.setIgnoreMouseEvents(!inside); } catch {}
+      log(`悬浮窗: 鼠标穿透${inside ? "关闭（窗内可滚动/选中）" : "恢复"}`);
+    }
+    if (tipHidePending && !inside) {
+      tipHidePending = false;
+      hideTipWindow();
+    }
+  }, 150);
+  tipCursorTimer.unref?.();
 }
 
 async function ensureTipWindow() {
@@ -344,19 +442,55 @@ async function ensureTipWindow() {
   return tipWin;
 }
 
-/** 把暂存的最新提示渲染进悬浮窗并测量尺寸（悬浮窗就绪后调用）。 */
+/** 把暂存的最新提示渲染进悬浮窗并测量尺寸（悬浮窗就绪后调用）。
+ *  宽度策略：先按内容自然宽（width:max-content）测量，再夹紧到上限 MAX_TIP_W
+ *  （480px，超出面板但不占满屏幕）——放得下就完整一行展示；**超宽的进程行不换行，
+ *  启用跑马灯自动滚动**（距离/时长写入 CSS 变量）；高度超限 MAX_TIP_H（320px）
+ *  内部滚动（进程很多时）。盒子的真实外沿尺寸（含 padding/border）用
+ *  getBoundingClientRect 取，窗口按它缩。 */
 function flushTipRender() {
   if (!tipWin || tipWin.isDestroyed() || !tipWinReady || !tipPending) return;
   const p = tipPending;
   tipPending = null;
   const theme = p.theme === "light" ? "light" : "dark";
+  let wa;
+  try {
+    wa = win && !win.isDestroyed()
+      ? screen.getDisplayMatching(win.getBounds()).workArea
+      : screen.getPrimaryDisplay().workArea;
+  } catch { return; }
+  const availW = Math.max(120, Math.min(MAX_TIP_W, Math.floor(wa.width - 8)));
+  const availH = Math.max(120, Math.min(MAX_TIP_H, Math.floor(wa.height - 8)));
+  // 跑马灯滚动速度（设置页可调，客户端随 payload 推送）：距离 / 速度 = 时长
+  const speedPx = Math.max(20, Math.min(100, Number(p.speedPx) || 45));
   const js =
     "(function () {" +
     "var de=document.documentElement;" +
     "de.dataset.gpuTheme=" + JSON.stringify(theme) + ";" +
     "de.style.cssText=" + JSON.stringify(String(p.vars || "")) + ";" +
-    "document.getElementById('tip-root').innerHTML=" + JSON.stringify(String(p.html || "")) + ";" +
-    "return {w:de.scrollWidth,h:de.scrollHeight};" +
+    "var root=document.getElementById('tip-root');" +
+    "root.innerHTML='';" +
+    "var box=document.createElement('div');" +
+    "box.style.cssText=" + JSON.stringify(String(p.style || "")) + ";" +
+    "box.style.boxSizing='border-box';" + // 显式宽度含 padding/border，整盒不超出可用宽
+    "box.style.width='max-content';box.style.maxWidth='none';" +
+    "box.innerHTML=" + JSON.stringify(String(p.html || "")) + ";" +
+    "root.appendChild(box);" +
+    "var naturalW=box.getBoundingClientRect().width;" + // 内容自然宽（最宽一行不换行）
+    "var w=Math.max(80,Math.min(naturalW," + availW + "));" +
+    "box.style.width=w+'px';box.style.maxWidth=w+'px';" +
+    // 跑马灯：命令视口超宽的行不换行、自动滚动；固定前缀（属主+显存）不参与。
+    // 溢出距离 = 命令文本宽 - 视口宽；时长 = 距离 / 速度（固定 px/s，行间同步）
+    "var sp=" + speedPx + ";" +
+    "var lines=box.querySelectorAll('.gpu-tip-line');" +
+    "for(var i=0;i<lines.length;i++){var ln=lines[i],vp=ln.querySelector('.gpu-tip-line-inner'),tx=vp&&vp.querySelector('.gpu-tip-line-text');" +
+    "if(!vp||!tx)continue;var d=tx.scrollWidth-vp.clientWidth;" +
+    "if(d>0){ln.className+=' gpu-marquee';ln.style.setProperty('--gpu-marquee-dist',d+'px');" +
+    "ln.style.setProperty('--gpu-marquee-dur',Math.max(1,Math.round(d/sp*10)/10)+'s');}}" +
+    "var h=box.scrollHeight;" +
+    "if(h>" + availH + "){box.style.maxHeight='" + availH + "px';box.style.overflowY='auto';}" +
+    "var rect=box.getBoundingClientRect();" +
+    "return {w:Math.round(rect.width),h:Math.round(rect.height),naturalW:Math.round(naturalW)};" +
     "})()";
   tipWin.webContents
     .executeJavaScript(js)
@@ -364,10 +498,21 @@ function flushTipRender() {
       if (quitting || !tipWin || tipWin.isDestroyed() || !tipAnchor) return;
       positionTipWindow(Number(size && size.w) || 1, Number(size && size.h) || 1);
     })
-    .catch((e) => log("悬浮框渲染失败:", String(e)));
+    .catch((e) => {
+      log("悬浮框渲染失败:", String(e));
+      sendTipFallback(); // 退回页面内提示（保底）
+    });
 }
 
 let tipBridgeSeen = false; // 是否收到过页面来的 show（诊断：preload 桥是否连通）
+
+/** 悬浮窗失败 → 隐藏残留的悬浮窗并通知页面退回页面内提示（保底，避免"悬停无提示"）。 */
+function sendTipFallback() {
+  if (tipWin && !tipWin.isDestroyed()) tipWin.hide(); // 旧内容别留在屏幕上
+  if (win && !win.isDestroyed()) {
+    try { win.webContents.send("gpu-monitor-tip-fallback"); } catch {}
+  }
+}
 
 function showTipWindow(payload) {
   if (quitting || !win || win.isDestroyed()) return;
@@ -389,28 +534,59 @@ function showTipWindow(payload) {
     flushTipRender();
     return;
   }
-  ensureTipWindow().catch((e) => log("悬浮框窗口失败:", String(e)));
+  ensureTipWindow().catch((e) => {
+    log("悬浮框窗口失败:", String(e));
+    sendTipFallback();
+  });
 }
 
-/** 按内容尺寸（来自 executeJavaScript 的测量）定位并显示悬浮窗；位置可伸出面板窗口。 */
+/** 按内容尺寸（来自 executeJavaScript 的测量）定位并显示悬浮窗；位置可伸出面板窗口。
+ *  横向：优先向右伸出面板（左缘对齐方块）；右边放不下且左边够时翻到方块左侧
+ *  （右缘对齐方块）；比屏幕还宽时从屏幕左缘铺开。仅夹紧到屏幕工作区。 */
 function positionTipWindow(w, h) {
   if (!tipWin || tipWin.isDestroyed() || !win || win.isDestroyed() || !tipAnchor) return;
   const wb = win.getBounds();
   const wa = screen.getDisplayMatching(wb).workArea;
   const ax = wb.x + tipAnchor.x;
   const ay = wb.y + tipAnchor.y;
-  // 左边缘与方块对齐（夹紧到屏幕内；宽度超出面板窗口不受限）
-  const x = Math.max(wa.x + 4, Math.min(ax, wa.x + wa.width - w - 4));
+  w = Math.max(1, Math.min(Math.round(w), wa.width - 8));
+  h = Math.max(1, Math.min(Math.round(h), wa.height - 8));
+  const rightRoom = wa.x + wa.width - 4 - ax; // 方块左缘右侧可用的空间
+  const leftRoom = ax + tipAnchor.width - (wa.x + 4); // 方块右缘左侧可用的空间
+  let x;
+  if (w <= rightRoom) x = ax; // 右边放得下：左缘对齐方块，向右伸出面板
+  else if (w <= leftRoom) x = ax + tipAnchor.width - w; // 右边不够、左边够：右缘对齐方块，向左铺开
+  else x = wa.x + 4; // 比屏幕还宽：从屏幕左缘开始
+  x = Math.max(wa.x + 4, Math.min(x, wa.x + wa.width - w - 4));
   // 优先方块下方；下方放不下翻到上方
   const below = ay + tipAnchor.height + 8;
   const y = below + h <= wa.y + wa.height - 4 ? below : Math.max(wa.y + 4, ay - h - 8);
-  tipWin.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.max(1, Math.round(w)), height: Math.max(1, Math.round(h)) });
+  tipWin.setBounds({ x: Math.round(x), y: Math.round(y), width: w, height: h });
   tipWin.showInactive(); // 不抢焦点（面板保持打开）
-  log(`悬浮窗: 定位显示于 ${Math.round(x)},${Math.round(y)} (${Math.round(w)}x${Math.round(h)})`);
+  startTipCursorWatch(); // 光标进窗 → 取消穿透（可滚动）；移出 → 恢复穿透
+  log(`悬浮窗: 定位显示于 ${Math.round(x)},${Math.round(y)} (${w}x${h})`);
 }
 
 ipcMain.on("gpu-monitor-tip-show", (e, payload) => showTipWindow(payload));
-ipcMain.on("gpu-monitor-tip-hide", () => hideTipWindow());
+// 提示内容"仅显存数字变化"的轻量更新：原地改写各行的固定前缀（属主+显存），
+// 不整窗重渲染 —— .gpu-tip-line-text 元素与跑马灯动画不动，滚动不从头开始。
+ipcMain.on("gpu-monitor-tip-update", (e, payload) => {
+  const prefixes = payload && Array.isArray(payload.prefixes) ? payload.prefixes : null;
+  if (!prefixes || quitting || !tipWin || tipWin.isDestroyed() || !tipWinReady || !tipWin.isVisible()) return;
+  const js =
+    "(function(){" +
+    "var box=document.querySelector('#tip-root>div');if(!box)return;" +
+    "var ps=" + JSON.stringify(prefixes) + ";" +
+    "var lines=box.querySelectorAll('.gpu-tip-line');" +
+    "for(var i=0;i<ps.length&&i<lines.length;i++){" +
+    "var pre=lines[i].querySelector('.gpu-tip-line-prefix');if(pre)pre.textContent=ps[i];}})()";
+  tipWin.webContents.executeJavaScript(js).catch(() => {});
+});
+ipcMain.on("gpu-monitor-tip-hide", () => {
+  // 光标正在悬浮窗内（滚动/选中中）：挂起隐藏，等移出再关，避免"一进提示就消失"
+  if (tipHovering) { tipHidePending = true; return; }
+  hideTipWindow();
+});
 
 // 拦截层点击 → 收起
 ipcMain.on("gpu-shield-click", hideAll);

@@ -14,6 +14,7 @@ test("settings: sanitize accepts a full valid patch and ignores unknown keys", (
     includeLocal: false,
     sshConfigPath: "  /tmp/cfg  ",
     enabledServers: ["gpu01", "gpu01", "gpu02", ""],
+    marqueeSpeedPx: 60,
     useSshConfig: true, // 未知键：忽略（引擎内部只读字段）
     foo: 1,
   });
@@ -25,6 +26,7 @@ test("settings: sanitize accepts a full valid patch and ignores unknown keys", (
     includeLocal: false,
     sshConfigPath: "/tmp/cfg", // trim
     enabledServers: ["gpu01", "gpu02"], // 去重 + 过滤空串
+    marqueeSpeedPx: 60,
   });
 });
 
@@ -33,6 +35,8 @@ test("settings: sanitize rejects out-of-range numbers and bad types", () => {
   assert.throws(() => sanitizeSettings({ intervalMs: 1e9 }), /intervalMs/);
   assert.throws(() => sanitizeSettings({ intervalMs: "abc" }), /intervalMs/);
   assert.throws(() => sanitizeSettings({ timeoutMs: 100 }), /timeoutMs/);
+  assert.throws(() => sanitizeSettings({ marqueeSpeedPx: 10 }), /marqueeSpeedPx/);
+  assert.throws(() => sanitizeSettings({ marqueeSpeedPx: 200 }), /marqueeSpeedPx/);
   assert.throws(() => sanitizeSettings({ includeLocal: "yes" }), /includeLocal/);
   assert.throws(() => sanitizeSettings({ sshConfigPath: 5 }), /sshConfigPath/);
   assert.throws(() => sanitizeSettings({ enabledServers: "gpu01" }), /enabledServers/);
@@ -87,6 +91,7 @@ test("settings: default file path is deterministic and key list is complete", ()
       "enabledServers",
       "includeLocal",
       "intervalMs",
+      "marqueeSpeedPx",
       "probeTimeoutMs",
       "sshConfigPath",
       "timeoutMs",
