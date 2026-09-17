@@ -57,15 +57,38 @@ test("网格 flex-basis 必须等于「4 个方块一行」的精确宽度", () 
   // 若 basis 小于 4 个方块的实际宽度，flex 会把网格压窄 → 每行只放得下 3 个方块（曾经如此）。
   // 而方块实际宽度取决于 box-sizing：content-box 下 1px 边框每块多占 2px，算式必须与之一致。
   const src = readFileSync(CLIENT_JS_PATH, "utf8");
-  const m = /\.gpu-grid\{[^}]*gap:(\d+)px;flex:1 1 (\d+)px/.exec(src);
-  assert.ok(m, "应能在样式中找到 .gpu-grid 的 gap 与 flex-basis");
+  const m = /\.gpu-grid\{[^}]*gap:(\d+)px;flex:1 1 var\(--gpu-grid-basis,(\d+)px\)/.exec(src);
+  assert.ok(m, "应能在样式中找到 .gpu-grid 的 gap 与 flex-basis（默认值写在 CSS 变量兜底里）");
   const gap = Number(m[1]);
   const basis = Number(m[2]);
-  const bw = Number(/box-sizing:border-box;position:relative;width:(\d+)px;height:(\d+)px/.exec(src)?.[1]);
-  assert.ok(Number.isFinite(bw), "方块应显式声明 box-sizing:border-box 与宽高");
+  const bw = Number(/width:var\(--gpu-block-size,(\d+)px\);height:var\(--gpu-block-size,\d+px\)/.exec(src)?.[1]);
+  assert.ok(Number.isFinite(bw), "方块应显式声明 box-sizing:border-box 与按 CSS 变量取宽高");
   assert.equal(basis, bw * 4 + gap * 3, `网格 flex-basis(${basis}) 必须等于 4 块一行宽度(${bw * 4 + gap * 3})`);
   assert.ok(
     /\.gpu-sys-track\{box-sizing:border-box/.test(src),
     "细条轨道也要 border-box，宽度才等于给网格留白时用的那个数"
   );
+});
+
+test("细条档位算术与 CSS 默认值一致（自适应换档的基础）", () => {
+  // 细条换行 = 可用宽度 < need。运行时按实测宽度换档（先收窄细条，再缩方块），
+  // 所以档位表里的每个数字都必须与 CSS 对应项一致，否则换档判断会与实际渲染不符。
+  const src = readFileSync(CLIENT_JS_PATH, "utf8");
+  assert.ok(src.includes("const BLOCK_GAP = 4;") && src.includes("const ROW_GAP = 3;"), "间隙常量应与 .gpu-grid / .gpu-blocks 的 gap 一致");
+  const BLOCK_GAP = 4;
+  const ROW_GAP = 3;
+  const rungs = [...src.matchAll(/\{ name: "(\w+)", bw: (\d+), colW: (\d+), gap: (\d+), labels: (true|false) \}/g)]
+    .map((m) => ({ name: m[1], bw: Number(m[2]), colW: Number(m[3]), gap: Number(m[4]), labels: m[5] === "true" }));
+  assert.deepEqual(rungs.map((r) => r.name), ["wide", "narrow", "small"], "应有三个档位：wide / narrow / small");
+  const need = (r) => r.bw * 4 + BLOCK_GAP * 3 + ROW_GAP + (r.colW * 2 + r.gap);
+  assert.deepEqual(rungs.map(need), [222, 213, 197], "各档所需可用宽度：宽 222 / 窄 213 / 小方块 197");
+  assert.deepEqual(rungs.map((r) => r.labels), [true, false, false], "只有宽档显示条下百分数");
+  // CSS 默认值必须就是宽档（未换档时的渲染与档位表一致）
+  const cssBw = Number(/width:var\(--gpu-block-size,(\d+)px\)/.exec(src)?.[1]);
+  const cssBasis = Number(/flex:1 1 var\(--gpu-grid-basis,(\d+)px\)/.exec(src)?.[1]);
+  assert.equal(cssBw, rungs[0].bw, "CSS 的 --gpu-block-size 默认值必须等于宽档方块宽");
+  assert.equal(cssBasis, rungs[0].bw * 4 + BLOCK_GAP * 3, "CSS 的 --gpu-grid-basis 默认值必须等于宽档的 4 块一行宽度");
+  // 换档实现必须复用同一套算术（railWidth / railNeed），不能各写一遍
+  assert.ok(/function railWidth\(r\) \{\s*return r\.colW \* 2 \+ r\.gap;/.test(src), "railWidth 应由 colW 与 gap 推出");
+  assert.ok(/function railNeed\(r\) \{[\s\S]{0,120}railWidth\(r\)/.test(src), "railNeed 应复用 railWidth");
 });
